@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stato della prenotazione</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a2219" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="icona-180.png">
+<link rel="icon" type="image/png" href="icona-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="stile.css">
+<style>
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.steps li{display:grid;grid-template-columns:28px 1fr;gap:12px;position:relative;padding-bottom:18px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:13px;top:28px;bottom:0;width:2px;background:var(--line)}
+.steps li:last-child::before{display:none}
+.steps li.ok::before{background:var(--leaf)}
+.steps .dot{width:28px;height:28px;border-radius:50%;border:2px solid var(--line);background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--surface)}
+.steps li.ok .dot{background:var(--leaf);border-color:var(--leaf)}
+.steps li.now .dot{border-color:var(--peel);box-shadow:0 0 0 4px var(--peel-soft)}
+.steps .t{font-weight:600;padding-top:3px}
+.steps li:not(.ok):not(.now) .t{color:var(--muted)}
+.steps .d{font-size:.84rem;color:var(--muted)}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-weight:600;font-size:.88rem}
+.pill.si{background:var(--leaf-soft);color:var(--leaf)}
+.pill.no{background:var(--warn-soft);color:var(--warn)}
+</style>
+</head>
+<body>
+<main class="shop" id="app"><div class="loading">Caricamento della prenotazione…</div></main>
+
+<script src="config.js"></script>
+<script>
+(() => {
+const CFG = window.APP_CONFIG || {};
+const FB = 'https://www.gstatic.com/firebasejs/12.4.0/';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const EUR = new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
+const fmtE = n => EUR.format(n || 0);
+const fmtQ = n => (Math.round((n||0)*100)/100).toLocaleString('it-IT');
+const num = v => { const n = parseFloat(String(v ?? '').replace(',','.')); return isFinite(n) ? n : 0; };
+const toDate = v => !v ? null : typeof v.toDate === 'function' ? v.toDate() : new Date(v);
+const fmtDT = d => d ? d.toLocaleString('it-IT',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : '';
+const fmtDlong = s => s ? new Date(s+'T12:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'}) : '';
+const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const id = new URLSearchParams(location.search).get('p');
+let F = null, db = null;
+
+function msg(titolo, testo, extra = ''){
+  $('#app').innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>${titolo}</h1></div><div class="panel empty"><p>${testo}</p>${extra}</div>`;
+}
+
+function render(p, o){
+  const chiusura = toDate(o?.chiusura);
+  const chiusa = !!o && (o.stato === 'chiusa' || o.stato === 'consegnata' || !o.aperta || (chiusura && chiusura <= new Date()));
+  const consegnata = !!p.consegnato;
+  const steps = [
+    {ok:true, t:'Prenotazione inviata', d:fmtDT(toDate(p.created_at))},
+    {ok:p.letta === true, t:'Vista dal gestore', d:p.letta ? 'Il gestore ha ricevuto la tua prenotazione.' : 'Il gestore non l\'ha ancora aperta.'},
+    {ok:chiusa, t:'Ordine al fornitore', d:chiusa ? 'Le prenotazioni sono chiuse: l\'ordine è in preparazione.' : (chiusura ? `Le prenotazioni chiudono ${fmtDT(chiusura)}.` : '')},
+    {ok:consegnata, t:'Consegnata', d:consegnata ? 'Buon appetito!' : (o?.consegna ? `Consegna prevista ${fmtDlong(o.consegna)}.` : '')},
+  ];
+  const now = steps.findIndex(s => !s.ok);
+  const prodotti = (o?.prodotti || []).filter(it => num(p.righe?.[it.pid]) > 0);
+  const tot = prodotti.reduce((s, it) => s + num(p.righe[it.pid]) * num(it.pp), 0);
+  $('#app').innerHTML = `<div class="shop-head">
+      <div class="eyebrow">La tua prenotazione</div>
+      <h1>${esc(o?.titolo || 'Prenotazione')}</h1>
+      <div class="small muted">A nome di <b style="color:var(--ink)">${esc(p.nome)}</b></div>
+    </div>
+    <div class="stack" style="gap:14px">
+      <section class="panel"><ol class="steps">${steps.map((s, i) => `<li class="${s.ok ? 'ok' : i === now ? 'now' : ''}"><span class="dot">${s.ok ? CHECK : ''}</span><div><div class="t">${s.t}</div>${s.d ? `<div class="d">${esc(s.d)}</div>` : ''}</div></li>`).join('')}</ol></section>
+      <section class="panel stack" style="gap:6px">
+        <div class="row between" style="align-items:center"><h2>Cosa hai prenotato</h2><span class="pill ${p.pagato ? 'si' : 'no'}">${p.pagato ? 'Pagata' : 'Da pagare'}</span></div>
+        ${o ? `<div class="list">${prodotti.map(it => `<div class="li" style="padding:8px 0"><div class="main"><div class="t">${esc(it.nome)}</div><div class="d">${fmtQ(num(p.righe[it.pid]))} ${esc(it.unita)} × ${fmtE(it.pp)}</div></div><div class="side"><b>${fmtE(num(p.righe[it.pid]) * num(it.pp))}</b></div></div>`).join('')}</div>
+        <div class="qtot"><span>Totale</span><span>${fmtE(tot)}</span></div>` : '<p class="small muted" style="margin:0">I dettagli dell\'ordinazione non sono più disponibili.</p>'}
+        ${p.nota ? `<div class="small muted">Nota: ${esc(p.nota)}</div>` : ''}
+      </section>
+      ${o?.note ? `<section class="panel small" style="white-space:pre-wrap">${esc(o.note)}</section>` : ''}
+      <p class="small muted" style="margin:0;text-align:center">Per modifiche scrivi al gestore su WhatsApp. Questa pagina si aggiorna quando la riapri.</p>
+      <div class="row" style="justify-content:center"><button class="btn sm" type="button" id="reload">Aggiorna</button>${o ? `<a class="btn sm" href="ordina.html?o=${encodeURIComponent(p.ord_id)}">Vai ai prodotti</a>` : ''}</div>
+    </div>`;
+  $('#reload').onclick = load;
+}
+
+async function load(){
+  try {
+    const s = await F.getDoc(F.doc(db, 'prenotazioni', id));
+    if (!s.exists()) { msg('Prenotazione non trovata', 'Potrebbe essere stata annullata dal gestore. Per informazioni scrivigli su WhatsApp.'); return; }
+    const p = s.data();
+    let o = null;
+    try { const so = await F.getDoc(F.doc(db, 'pubbliche', p.ord_id)); if (so.exists()) o = so.data(); } catch {}
+    render(p, o);
+  } catch (e) {
+    msg('Stato non raggiungibile', 'Controlla la connessione e riprova.', '<button class="btn primary" type="button" onclick="location.reload()">Riprova</button>');
+  }
+}
+
+async function boot(){
+  if (!CFG.apiKey || /INCOLLA/.test(String(CFG.apiKey) + CFG.projectId)) { msg('Pagina non configurata', 'Avvisa il gestore degli ordini.'); return; }
+  if (!id || !/^[A-Za-z0-9_-]{8,64}$/.test(id)) { msg('Link non valido', 'Il link della prenotazione è incompleto. Controlla di averlo copiato tutto.'); return; }
+  try {
+    const [A, F_] = await Promise.all([import(FB + 'firebase-app.js'), import(FB + 'firebase-firestore.js')]);
+    F = F_; db = F.getFirestore(A.initializeApp(CFG));
+  } catch { msg('Stato non raggiungibile', 'Controlla la connessione e riprova.'); return; }
+  await load();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+}
+boot();
+})();
+</script>
+</body>
+</html>

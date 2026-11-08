@@ -1,0 +1,60 @@
+# Pubblica la cartella "sito" su GitHub Pages.
+# La configurazione di Firebase non è nel codice: viene letta dalle variabili del repository
+# (Settings → Secrets and variables → Actions → scheda Variables) e scritta in sito/config.js
+# solo nella copia pubblicata.
+name: Pubblica il sito
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  pubblica:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Crea config.js dalle variabili
+        env:
+          FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+        run: |
+          mancanti=""
+          for v in FIREBASE_API_KEY FIREBASE_PROJECT_ID FIREBASE_APP_ID; do
+            [ -n "${!v}" ] || mancanti="$mancanti $v"
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::Mancano le variabili del repository:$mancanti (Settings → Secrets and variables → Actions → Variables)"
+            exit 1
+          fi
+          AUTH_DOMAIN="${FIREBASE_AUTH_DOMAIN:-$FIREBASE_PROJECT_ID.firebaseapp.com}"
+          jq -n \
+            --arg apiKey "$FIREBASE_API_KEY" \
+            --arg authDomain "$AUTH_DOMAIN" \
+            --arg projectId "$FIREBASE_PROJECT_ID" \
+            --arg appId "$FIREBASE_APP_ID" \
+            '{apiKey:$apiKey, authDomain:$authDomain, projectId:$projectId, appId:$appId}' \
+            | { printf 'window.APP_CONFIG = '; cat; printf ';\n'; } > sito/config.js
+          echo "config.js creato per il progetto $FIREBASE_PROJECT_ID"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: sito
+      - id: deploy
+        uses: actions/deploy-pages@v4

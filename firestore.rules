@@ -1,0 +1,46 @@
+rules_version = '2';
+// Ordini Agrumi Bio — regole di sicurezza di Firestore.
+// Da incollare in Firebase → Firestore Database → Regole → Pubblica.
+// Prima sostituisci INCOLLA-QUI-IL-TUO-UID con l'UID del tuo utente (Authentication → Users).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function gestore() {
+      return request.auth != null && request.auth.uid in ['INCOLLA-QUI-IL-TUO-UID'];
+    }
+
+    // Versione pubblica delle ordinazioni (senza prezzi di Forme dell'Anima): la leggono i clienti.
+    match /pubbliche/{id} {
+      allow read: if true;
+      allow write: if gestore();
+    }
+
+    // Prenotazioni: i clienti possono solo crearne una nuova, valida, per un'ordinazione aperta.
+    // Chi ha il link di stato (stato.html?p=<id>) può leggere QUELLA prenotazione: l'id è casuale
+    // e impossibile da indovinare. Elencare o cercare le prenotazioni resta riservato al gestore.
+    match /prenotazioni/{id} {
+      allow get: if true;
+      allow list, update, delete: if gestore();
+      allow create: if gestore() || prenotazioneCliente(request.resource.data);
+    }
+
+    function prenotazioneCliente(d) {
+      let o = get(/databases/$(database)/documents/pubbliche/$(d.ord_id)).data;
+      return d.keys().hasOnly(['ord_id','nome','telefono','righe','nota','origine','letta','pagato','consegnato','created_at'])
+        && d.keys().hasAll(['ord_id','nome','telefono','righe','nota','origine','letta','pagato','consegnato','created_at'])
+        && d.origine == 'cliente' && d.letta == false && d.pagato == false && d.consegnato == false
+        && d.nome is string && d.nome.size() >= 2 && d.nome.size() <= 80
+        && d.telefono is string && d.telefono.size() <= 30
+        && d.nota is string && d.nota.size() <= 300
+        && d.righe is map && d.righe.size() > 0 && d.righe.size() <= 60
+        && d.righe.keys().hasOnly(o.pids)
+        && d.created_at == request.time
+        && o.aperta == true && o.chiusura > request.time;
+    }
+
+    // Tutto il resto (prodotti, ordinazioni con prezzi FdA, membri, impostazioni): solo il gestore.
+    match /{col}/{id} {
+      allow read, write: if gestore() && col != 'pubbliche' && col != 'prenotazioni';
+    }
+  }
+}

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Prenota agrumi bio</title>
+<meta name="description" content="Scegli agrumi biologici e prodotti di Forme dell'Anima e invia la tua prenotazione.">
+<meta property="og:title" content="Prenota agrumi bio e prodotti di Forme dell'Anima">
+<meta property="og:description" content="Scegli cosa vuoi, vedi il totale e invia la prenotazione in un minuto.">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a2219" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="icona-180.png">
+<link rel="icon" type="image/png" href="icona-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="stile.css">
+</head>
+<body>
+<main class="shop" id="app"><div class="loading">Caricamento dei prodotti…</div></main>
+<div class="cartbar" id="cartbar" hidden><div class="in"><div class="tot"><b id="cartTot">0 €</b><span id="cartN"></span></div><button class="btn primary" id="cartBtn" type="button">Continua</button></div></div>
+
+<script src="config.js"></script>
+<script src="notifiche.js"></script>
+<script>
+(() => {
+const CFG = window.APP_CONFIG || {};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const EUR = new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
+const fmtE = n => EUR.format(n || 0);
+const fmtQ = n => (Math.round((n||0)*100)/100).toLocaleString('it-IT');
+const num = v => { const n = parseFloat(String(v ?? '').replace(',','.')); return isFinite(n) ? n : 0; };
+const fmtDTlong = s => new Date(s).toLocaleString('it-IT',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+const fmtDlong = s => s ? new Date(s+'T12:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'}) : '';
+const CAT = {agrumi:'Agrumi biologici', fda:"Forme dell'Anima"};
+const linkStato = id => { const u = new URL('stato.html', location.href); u.search = '?p=' + encodeURIComponent(id); u.hash = ''; return u.href; };
+const mie = () => { try { return JSON.parse(localStorage.getItem('mie_prenotazioni') || '[]'); } catch { return []; } };
+function ricorda(id){ try { localStorage.setItem('mie_prenotazioni', JSON.stringify([{id, ord:O.id, titolo:O.titolo, quando:new Date().toISOString()}, ...mie()].slice(0, 20))); } catch {} }
+function giaHtml(){
+  const l = mie().filter(x => x.ord === O.id);
+  if (!l.length) return '';
+  return `<div class="small" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center"><b>Hai già prenotato da questo telefono:</b>${l.map((x, i) => `<a href="${esc(linkStato(x.id))}">vedi lo stato${l.length > 1 ? ' (' + (i + 1) + ')' : ''}</a>`).join('')}</div>`;
+}
+async function copia(t){ try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
+const store = { get(k){ try { return localStorage.getItem(k) || ''; } catch { return ''; } }, set(k,v){ try { localStorage.setItem(k, v); } catch {} } };
+
+const FB = 'https://www.gstatic.com/firebasejs/12.4.0/';
+let F = null, db = null, O = null, lastId = '', cart = {}, step = 'shop', sending = false, lastTot = 0, errText = '';
+
+function total(){ return (O?.prodotti||[]).reduce((s,p) => s + num(cart[p.pid]) * num(p.pp), 0); }
+function count(){ return Object.values(cart).filter(q => num(q) > 0).length; }
+
+function render(){
+  const app = $('#app'), bar = $('#cartbar');
+  bar.hidden = !(O && O.aperta && step === 'shop');
+  if (!O) return;
+  if (!O.aperta) {
+    app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>${esc(O.titolo)}</h1>${giaHtml()}</div>
+      <div class="panel empty"><h2>Prenotazioni chiuse</h2><p>Il termine per questa ordinazione è passato. Aspetta il prossimo messaggio nel gruppo WhatsApp.</p></div>`;
+    return;
+  }
+  if (step === 'done') {
+    app.innerHTML = `<div class="done">
+      <div class="ok"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <h1>Prenotazione inviata</h1>
+      <p class="muted" style="margin:0;max-width:36ch">Grazie! Totale da pagare <b style="color:var(--ink)">${fmtE(lastTot)}</b>${O.consegna ? `. Consegna prevista ${fmtDlong(O.consegna)}` : ''}.</p>
+      <div class="panel recap">${recapHtml()}</div>
+      <div class="panel stack" style="gap:10px;width:100%;text-align:left">
+        <h2 style="margin:0">Segui la tua prenotazione</h2>
+        <p class="small muted" style="margin:0">Con questo link vedi quando il gestore l'ha ricevuta, se risulta pagata e quando è pronta per la consegna. Salvalo: per esempio invialo a te stesso su WhatsApp.</p>
+        <div class="code">${esc(linkStato(lastId))}</div>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <a class="btn primary sm" href="${esc(linkStato(lastId))}">Vedi lo stato</a>
+          <button class="btn sm" type="button" id="copyStato">Copia link</button>
+          <a class="btn sm" href="https://wa.me/?text=${encodeURIComponent('La mia prenotazione "' + O.titolo + '": ' + linkStato(lastId))}">Invia su WhatsApp</a>
+        </div>
+      </div>
+      <p class="small muted" style="margin:0">Per modifiche scrivi al gestore su WhatsApp.</p>
+      <button class="btn" type="button" id="again">Fai un'altra prenotazione</button>
+    </div>`;
+    $('#copyStato').onclick = async e => { e.target.textContent = (await copia(linkStato(lastId))) ? 'Copiato ✓' : 'Copia non riuscita'; };
+    $('#again').onclick = () => { cart = {}; step = 'shop'; render(); window.scrollTo(0,0); };
+    return;
+  }
+  if (step === 'details') {
+    app.innerHTML = `<div class="shop-head"><button class="btn ghost sm" type="button" id="back" style="align-self:flex-start;padding-left:0">← Modifica i prodotti</button><h1>Quasi fatto</h1></div>
+      <form class="stack" id="sendForm" style="gap:16px" novalidate>
+        <div class="panel recap">${recapHtml()}</div>
+        <label class="f">Nome e cognome<input id="c-nome" autocomplete="name" required value="${esc(store.get('cliente_nome'))}" placeholder="Come ti chiamano nel gruppo"></label>
+        <label class="f">Telefono (facoltativo)<input id="c-tel" type="tel" inputmode="tel" autocomplete="tel" value="${esc(store.get('cliente_tel'))}" placeholder="Per avvisarti alla consegna"></label>
+        <label class="f">Nota per il gestore (facoltativa)<input id="c-nota" maxlength="300" placeholder="Es. ritira mia sorella"></label>
+        ${errText ? `<div class="err">${esc(errText)}</div>` : ''}
+        <button class="btn primary" type="submit" style="min-height:52px;font-size:1.05rem" ${sending?'disabled':''}>${sending ? 'Invio in corso…' : `Invia prenotazione · ${fmtE(total())}`}</button>
+        <p class="small muted" style="margin:0">Il nome e il telefono vengono letti solo dal gestore degli ordini.</p>
+      </form>`;
+    $('#back').onclick = () => { step = 'shop'; errText = ''; render(); };
+    $('#sendForm').onsubmit = send;
+    return;
+  }
+  // shop
+  const groups = ['agrumi','fda'].map(cat => {
+    const items = O.prodotti.filter(p => p.categoria === cat);
+    if (!items.length) return '';
+    return `<section class="panel" style="padding-block:6px"><h2 style="padding-top:10px">${CAT[cat]}</h2>${items.map(p => {
+      const q = num(cart[p.pid]);
+      return `<div class="item ${q>0?'sel':''}" data-pid="${esc(p.pid)}">
+        <div style="min-width:0"><div class="t">${esc(p.nome)}</div><div class="d">${fmtE(p.pp)} / ${esc(p.unita)}${q>0?` · <b>${fmtE(q*p.pp)}</b>`:''}</div></div>
+        <div class="stepper"><button type="button" class="minus" aria-label="Togli ${esc(p.nome)}" ${q<=0?'disabled':''}>−</button><input inputmode="decimal" aria-label="Quantità ${esc(p.nome)} in ${esc(p.unita)}" value="${q>0?fmtQ(q):''}" placeholder="0"><button type="button" class="plus" aria-label="Aggiungi ${esc(p.nome)}">+</button></div>
+      </div>`; }).join('')}</section>`;
+  }).join('');
+  app.innerHTML = `<div class="shop-head">
+      <div class="eyebrow">Agrumi bio · Forme dell'Anima</div>
+      <h1>${esc(O.titolo)}</h1>
+      <span class="when">Prenota entro ${fmtDTlong(O.chiusura)}</span>
+      ${giaHtml()}
+      ${O.consegna ? `<div class="small muted">Consegna prevista ${fmtDlong(O.consegna)}</div>` : ''}
+      ${O.note ? `<div class="small" style="white-space:pre-wrap">${esc(O.note)}</div>` : ''}
+    </div>
+    <div class="stack" style="gap:14px">${groups}</div>`;
+  updateBar();
+}
+function recapHtml(){
+  const rows = O.prodotti.filter(p => num(cart[p.pid]) > 0);
+  return `<div class="list">${rows.map(p => `<div class="li" style="padding:8px 0"><div class="main"><div class="t">${esc(p.nome)}</div><div class="d">${fmtQ(num(cart[p.pid]))} ${esc(p.unita)} × ${fmtE(p.pp)}</div></div><div class="side"><b>${fmtE(num(cart[p.pid])*p.pp)}</b></div></div>`).join('')}</div>
+    <div class="qtot"><span>Totale</span><span>${fmtE(step === 'done' ? lastTot : total())}</span></div>`;
+}
+function updateBar(){
+  const n = count();
+  $('#cartTot').textContent = fmtE(total());
+  $('#cartN').textContent = n ? `${n} prodott${n===1?'o':'i'} scelt${n===1?'o':'i'}` : 'Scegli i prodotti con +';
+  $('#cartBtn').disabled = !n;
+}
+function refreshItem(row){
+  const p = O.prodotti.find(x => x.pid === row.dataset.pid); const q = num(cart[p.pid]);
+  row.classList.toggle('sel', q > 0);
+  row.querySelector('.d').innerHTML = `${fmtE(p.pp)} / ${esc(p.unita)}${q>0?` · <b>${fmtE(q*p.pp)}</b>`:''}`;
+  row.querySelector('.minus').disabled = q <= 0;
+  updateBar();
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.stepper button'); if (!b) return;
+  const row = b.closest('.item'); const pid = row.dataset.pid;
+  let q = num(cart[pid]) + (b.classList.contains('plus') ? 1 : -1);
+  q = Math.max(0, Math.round(q*100)/100);
+  cart[pid] = q; row.querySelector('input').value = q > 0 ? fmtQ(q) : '';
+  refreshItem(row);
+});
+document.addEventListener('input', e => {
+  const inp = e.target.closest('.stepper input'); if (!inp) return;
+  const row = inp.closest('.item'); cart[row.dataset.pid] = Math.max(0, Math.min(500, num(inp.value)));
+  refreshItem(row);
+});
+$('#cartBtn').onclick = () => { if (!count()) return; step = 'details'; errText = ''; render(); window.scrollTo(0,0); };
+
+async function send(e){
+  e.preventDefault();
+  if (sending) return;
+  const nome = $('#c-nome').value.trim(), tel = $('#c-tel').value.trim(), nota = $('#c-nota').value.trim();
+  if (nome.length < 2) { errText = 'Scrivi il tuo nome, così il gestore sa di chi è la prenotazione.'; render(); return; }
+  store.set('cliente_nome', nome); store.set('cliente_tel', tel);
+  const righe = {}; for (const [k,q] of Object.entries(cart)) if (num(q) > 0) righe[k] = num(q);
+  sending = true; errText = ''; render();
+  const tot = total(), n = count();
+  let ref;
+  try {
+    ref = F.doc(F.collection(db, 'prenotazioni'));
+    const write = F.setDoc(ref, {ord_id:O.id, nome:nome.slice(0,80), telefono:tel.slice(0,30), righe, nota:nota.slice(0,300),
+      origine:'cliente', letta:false, pagato:false, consegnato:false, created_at:F.serverTimestamp()});
+    await Promise.race([write, new Promise((_, rej) => setTimeout(() => rej({code:'timeout'}), 20000))]);
+  } catch (e) {
+    sending = false;
+    const c = String(e?.code || '');
+    if (/permission/.test(c)) {
+      if (new Date(O.chiusura) <= new Date()) O.aperta = false;
+      errText = 'Invio non riuscito: le prenotazioni potrebbero essere chiuse. Ricarica la pagina e riprova.';
+    } else errText = /timeout|unavailable/.test(c) ? 'La connessione è lenta o assente. Controlla la rete; se il problema continua, scrivi al gestore.' : 'Invio non riuscito, riprova.';
+    render(); return;
+  }
+  sending = false;
+  if (window.Notifiche && O.avvisi?.length) Notifiche.invia(O.avvisi, Notifiche.nuovaPrenotazione({ordinazione:O.titolo, prodotti:n, totale:tot, link:O.app_url ? O.app_url.split('#')[0] + '#ord-' + O.id : ''}));
+  lastId = ref.id; ricorda(ref.id);
+  lastTot = tot; step = 'done'; render(); window.scrollTo(0,0);
+}
+
+async function boot(){
+  const app = $('#app');
+  if (!CFG.apiKey || /INCOLLA/.test(String(CFG.apiKey) + CFG.projectId)) { app.innerHTML = '<div class="panel empty"><h2>Pagina non ancora configurata</h2><p>Avvisa il gestore degli ordini.</p></div>'; return; }
+  const id = new URLSearchParams(location.search).get('o');
+  let data = null, error = null;
+  try {
+    const [A, F_] = await Promise.all([import(FB + 'firebase-app.js'), import(FB + 'firebase-firestore.js')]);
+    F = F_; db = F.getFirestore(A.initializeApp(CFG));
+    const norm = s => { const d = s.data(); return {...d, id:s.id, chiusura:d.chiusura.toDate().toISOString(), aperta:d.aperta === true && d.chiusura.toMillis() > Date.now()}; };
+    if (id) { const s = await F.getDoc(F.doc(db, 'pubbliche', id)); if (s.exists()) data = norm(s); }
+    else {
+      const q = await F.getDocs(F.query(F.collection(db, 'pubbliche'), F.where('aperta', '==', true)));
+      data = q.docs.map(norm).filter(o => o.aperta).sort((a,b) => a.chiusura.localeCompare(b.chiusura))[0] || null;
+    }
+  } catch (e) { error = e; }
+  if (error) { app.innerHTML = '<div class="panel empty"><h2>Prodotti non raggiungibili</h2><p>Controlla la connessione e ricarica la pagina.</p><button class="btn primary" onclick="location.reload()">Ricarica</button></div>'; return; }
+  if (!data) { app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>Nessuna ordinazione aperta</h1></div><div class="panel empty"><p>In questo momento non ci sono prenotazioni aperte. Il prossimo elenco di prodotti arriverà nel gruppo WhatsApp.</p></div>`; return; }
+  O = data; O.prodotti = (O.prodotti||[]).map(p => ({...p, pp:num(p.pp)}));
+  document.title = O.titolo;
+  render();
+}
+boot();
+})();
+</script>
+</body>
+</html>

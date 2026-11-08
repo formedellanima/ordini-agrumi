@@ -1,0 +1,15 @@
+# Generato da GitHub Actions dalle variabili del repository (vedi .github/workflows/pubblica.yml).
+# Per provare in locale copia sito/config.esempio.js in sito/config.js: non va caricato su GitHub.
+sito/config.js
+
+# Dati personali o versioni precedenti: restano solo su questo Mac.
+LEGGIMI.md
+web/
+supabase/
+ordini-agrumi.html
+.firebaserc
+
+# File di sistema e log
+.DS_Store
+firebase-debug.log
+*.log
