@@ -30,7 +30,7 @@ service cloud.firestore {
         && d.keys().hasAll(['ord_id','nome','telefono','righe','nota','origine','letta','pagato','consegnato','created_at'])
         && d.origine == 'cliente' && d.letta == false && d.pagato == false && d.consegnato == false
         && d.nome is string && d.nome.size() >= 2 && d.nome.size() <= 80
-        && d.telefono is string && d.telefono.size() <= 30
+        && d.telefono is string && d.telefono.size() >= 8 && d.telefono.size() <= 30
         && d.nota is string && d.nota.size() <= 300
         && d.righe is map && d.righe.size() > 0 && d.righe.size() <= 60
         && d.righe.keys().hasOnly(o.pids)

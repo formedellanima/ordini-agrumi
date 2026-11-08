@@ -39,10 +39,12 @@ const mie = () => { try { return JSON.parse(localStorage.getItem('mie_prenotazio
 function ricorda(id){ try { localStorage.setItem('mie_prenotazioni', JSON.stringify([{id, ord:O.id, titolo:O.titolo, quando:new Date().toISOString()}, ...mie()].slice(0, 20))); } catch {} }
 function giaHtml(){
   const l = mie().filter(x => x.ord === O.id);
-  if (!l.length) return '';
+  if (!l.length || ANTEPRIMA) return '';
   return `<div class="small" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center"><b>Hai già prenotato da questo telefono:</b>${l.map((x, i) => `<a href="${esc(linkStato(x.id))}">vedi lo stato${l.length > 1 ? ' (' + (i + 1) + ')' : ''}</a>`).join('')}</div>`;
 }
 async function copia(t){ try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
+const ANTEPRIMA = new URLSearchParams(location.search).has('anteprima');
+let draft = null; // valori già scritti nel modulo, conservati se c'è un errore
 const store = { get(k){ try { return localStorage.getItem(k) || ''; } catch { return ''; } }, set(k,v){ try { localStorage.setItem(k, v); } catch {} } };
 
 const FB = 'https://www.gstatic.com/firebasejs/12.4.0/';
@@ -87,11 +89,11 @@ function render(){
     app.innerHTML = `<div class="shop-head"><button class="btn ghost sm" type="button" id="back" style="align-self:flex-start;padding-left:0">← Modifica i prodotti</button><h1>Quasi fatto</h1></div>
       <form class="stack" id="sendForm" style="gap:16px" novalidate>
         <div class="panel recap">${recapHtml()}</div>
-        <label class="f">Nome e cognome<input id="c-nome" autocomplete="name" required value="${esc(store.get('cliente_nome'))}" placeholder="Come ti chiamano nel gruppo"></label>
-        <label class="f">Telefono (facoltativo)<input id="c-tel" type="tel" inputmode="tel" autocomplete="tel" value="${esc(store.get('cliente_tel'))}" placeholder="Per avvisarti alla consegna"></label>
-        <label class="f">Nota per il gestore (facoltativa)<input id="c-nota" maxlength="300" placeholder="Es. ritira mia sorella"></label>
+        <label class="f">Nome e cognome<input id="c-nome" autocomplete="name" required value="${esc(draft ? draft.nome : store.get('cliente_nome'))}" placeholder="Come ti chiamano nel gruppo"></label>
+        <label class="f">Telefono<input id="c-tel" type="tel" inputmode="tel" autocomplete="tel" required value="${esc(draft ? draft.tel : store.get('cliente_tel'))}" placeholder="Es. 333 123 4567"></label>
+        <label class="f">Nota per il gestore (facoltativa)<input id="c-nota" maxlength="300" value="${esc(draft ? draft.nota : '')}" placeholder="Es. ritira mia sorella"></label>
         ${errText ? `<div class="err">${esc(errText)}</div>` : ''}
-        <button class="btn primary" type="submit" style="min-height:52px;font-size:1.05rem" ${sending?'disabled':''}>${sending ? 'Invio in corso…' : `Invia prenotazione · ${fmtE(total())}`}</button>
+        <button class="btn primary" type="submit" style="min-height:52px;font-size:1.05rem" ${sending?'disabled':''}>${sending ? 'Invio in corso…' : ANTEPRIMA ? 'Invio disattivato in anteprima' : `Invia prenotazione · ${fmtE(total())}`}</button>
         <p class="small muted" style="margin:0">Il nome e il telefono vengono letti solo dal gestore degli ordini.</p>
       </form>`;
     $('#back').onclick = () => { step = 'shop'; errText = ''; render(); };
@@ -110,6 +112,7 @@ function render(){
       </div>`; }).join('')}</section>`;
   }).join('');
   app.innerHTML = `<div class="shop-head">
+      ${ANTEPRIMA ? '<div class="anteprima-banner">Anteprima: così vedranno la pagina i clienti. Non è ancora pubblica.</div>' : ''}
       <div class="eyebrow">Agrumi bio · Forme dell'Anima</div>
       <h1>${esc(O.titolo)}</h1>
       <span class="when">Prenota entro ${fmtDTlong(O.chiusura)}</span>
@@ -157,7 +160,11 @@ async function send(e){
   e.preventDefault();
   if (sending) return;
   const nome = $('#c-nome').value.trim(), tel = $('#c-tel').value.trim(), nota = $('#c-nota').value.trim();
+  draft = {nome, tel, nota};
   if (nome.length < 2) { errText = 'Scrivi il tuo nome, così il gestore sa di chi è la prenotazione.'; render(); return; }
+  const cifre = tel.replace(/\D/g, '');
+  if (cifre.length < 8 || cifre.length > 15) { errText = 'Scrivi il tuo numero di telefono: serve al gestore per contattarti per la consegna.'; render(); return; }
+  if (ANTEPRIMA) { errText = 'Questa è un\'anteprima: l\'invio è disattivato. I clienti potranno prenotare dopo la pubblicazione.'; render(); return; }
   store.set('cliente_nome', nome); store.set('cliente_tel', tel);
   const righe = {}; for (const [k,q] of Object.entries(cart)) if (num(q) > 0) righe[k] = num(q);
   sending = true; errText = ''; render();
@@ -179,12 +186,24 @@ async function send(e){
   }
   sending = false;
   if (window.Notifiche && O.avvisi?.length) Notifiche.invia(O.avvisi, Notifiche.nuovaPrenotazione({ordinazione:O.titolo, prodotti:n, totale:tot, link:O.app_url ? O.app_url.split('#')[0] + '#ord-' + O.id : ''}));
-  lastId = ref.id; ricorda(ref.id);
+  lastId = ref.id; ricorda(ref.id); draft = null;
   lastTot = tot; step = 'done'; render(); window.scrollTo(0,0);
 }
 
+// Anteprima per il gestore: i dati della bozza arrivano dalla pagina del gestore (stessa origine), senza database.
+function bootAnteprima(){
+  const app = $('#app');
+  app.innerHTML = '<div class="loading">Caricamento dell\'anteprima…</div>';
+  window.addEventListener('message', e => {
+    if (e.origin !== location.origin || e.data?.tipo !== 'anteprima') return;
+    O = e.data.ordine; O.prodotti = (O.prodotti || []).map(p => ({...p, pp:num(p.pp)})); O.aperta = true;
+    cart = {}; step = 'shop'; draft = null; errText = ''; render();
+  });
+  window.parent?.postMessage({tipo:'anteprima-pronta'}, location.origin);
+}
 async function boot(){
   const app = $('#app');
+  if (ANTEPRIMA) { bootAnteprima(); return; }
   if (!CFG.apiKey || /INCOLLA/.test(String(CFG.apiKey) + CFG.projectId)) { app.innerHTML = '<div class="panel empty"><h2>Pagina non ancora configurata</h2><p>Avvisa il gestore degli ordini.</p></div>'; return; }
   const id = new URLSearchParams(location.search).get('o');
   let data = null, error = null;

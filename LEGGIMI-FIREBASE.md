@@ -124,17 +124,48 @@ Per le notifiche:
 ## Uso settimanale
 
 1. **Prodotti**: controlla i prezzi al pubblico e i prezzi di Forme dell'Anima.
-2. **Nuova ordinazione** (oppure *Duplica* quella della settimana prima): scegli i prodotti, la data di chiusura e la consegna.
-3. Scheda **Messaggi → Annuncio per il gruppo → Copia testo**, poi incollalo nel gruppo WhatsApp. Il messaggio contiene il link per prenotare.
-4. I clienti aprono il link, scelgono le quantità, scrivono il nome e inviano.
+2. **Nuova ordinazione** (oppure *Duplica* quella della settimana prima): scegli i prodotti, la data di chiusura e la consegna. L'ordinazione nasce come **Bozza**: i clienti non la vedono.
+3. Premi **Anteprima**: vedi la vera pagina dei clienti con i dati della bozza. Puoi provare a scegliere i prodotti, ma l'invio è disattivato. Se è tutto giusto premi **Pubblica**: l'app controlla che ci siano prodotti, prezzi e una data di chiusura futura.
+4. Scheda **Messaggi → Annuncio per il gruppo → Copia testo**, poi incollalo nel gruppo WhatsApp. Il messaggio contiene il link per prenotare.
+5. I clienti aprono il link, scelgono le quantità, scrivono il nome e inviano.
    - Ti arriva la notifica e la prenotazione compare con l'etichetta **Nuova**.
-   - Il cliente viene aggiunto da solo ai **Membri**. L'app lo riconosce dal nome, oppure dal telefono se coincide anche il nome di battesimo: due familiari che prenotano dallo stesso telefono restano due membri distinti.
+   - Il cliente viene aggiunto da solo ai **Clienti**. L'app lo riconosce dal nome, oppure dal telefono se coincide anche il nome di battesimo: due familiari che prenotano dallo stesso telefono restano due membri distinti.
    - Il cliente vede il **link allo stato** della sua prenotazione, con i pulsanti *Copia link* e *Invia su WhatsApp* per salvarlo. Se riapre la pagina dei prodotti dallo stesso telefono, trova "Hai già prenotato: vedi lo stato".
    - Anche il messaggio di riepilogo per il cliente (pulsante *Copia* sulla prenotazione) contiene il link allo stato.
-5. Alla scadenza il link smette di accettare prenotazioni da solo. Per mandare le quantità al fornitore usa **Messaggi → Ordine per Forme dell'Anima**.
-6. Alla consegna segna *Pagato* e *Consegnato* per ogni cliente, poi premi **Segna consegnata**.
+6. Alla scadenza il link smette di accettare prenotazioni da solo. Per mandare le quantità al fornitore usa **Messaggi → Ordine per Forme dell'Anima**.
+7. Alla consegna segna *Pagato* e *Consegnato* per ogni cliente, poi premi **Segna consegnata**.
 
 Se un cliente risponde in chat invece di usare il link: **+ Prenotazione → Ha risposto in chat? Incolla il messaggio**.
+
+I clienti devono indicare **nome e telefono**: senza un numero valido la prenotazione non parte.
+
+### Fogli di calcolo (Excel)
+
+| Dove | Pulsante | Contenuto |
+|---|---|---|
+| Scheda di un'ordinazione | **Excel** | Riepilogo con i conti, Prenotazioni (una colonna per prodotto), Ordine per Forme dell'Anima |
+| Dashboard | **Excel** | Tutte le ordinazioni, tutte le prenotazioni, prodotti, anagrafe clienti |
+| Clienti | **Excel** | Anagrafe con spesa, pagamenti e prodotto preferito |
+| Scheda cliente | **Excel** | Resoconto personale, storico, dettaglio prodotti, prodotti preferiti |
+
+Sul telefono il file si apre nel menu Condividi (*Salva su File*, WhatsApp, Mail…); sul computer viene scaricato.
+
+### Clienti e analisi
+
+- **Clienti** (prima "Membri") è l'anagrafe: ricerca per nome o telefono, ordinamento per nome, spesa, debito o data, e totali in alto.
+- Toccando un cliente si apre la sua **scheda**: chiamata e WhatsApp diretti, totale speso, pagato e da pagare, prodotti preferiti, storico.
+- Nella scheda c'è anche il **resoconto personale**, da inviare con *Invia su WhatsApp* o scaricare in Excel.
+- La **Dashboard** mostra anche clienti migliori, clienti attivi, nuovi e ricorrenti, spesa media, ricavi per categoria e l'elenco di chi deve ancora pagare.
+
+### Gesture sullo smartphone
+
+| Gesto | Effetto |
+|---|---|
+| Scorri a sinistra / destra | Sezione successiva o precedente (Dashboard → Ordinazioni → Prodotti → Clienti); dentro un'ordinazione cambia scheda |
+| Scorri dal bordo sinistro (app installata) | Torna indietro |
+| Scorri una prenotazione verso destra | Pagato / da pagare |
+| Scorri una prenotazione verso sinistra | Consegnato / non consegnato |
+| Trascina in giù la parte alta di una finestra | La chiude |
 
 **Link fisso** (nelle impostazioni): `…/ordina.html` apre sempre l'ordinazione aperta del momento. Puoi metterlo nella descrizione del gruppo.
 

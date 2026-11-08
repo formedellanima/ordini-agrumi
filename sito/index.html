@@ -63,7 +63,7 @@ const toLocalDT = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDat
 const fmtIn = n => (n === undefined || n === null || n === '') ? '' : String(n).replace('.', ',');
 const CAT = {agrumi:'Agrumi bio', fda:"Forme dell'Anima"};
 const CAT_MSG = {agrumi:'🍊 Agrumi biologici', fda:"🌿 Forme dell'Anima"};
-const STATO = {aperta:'Aperta', chiusa:'Prenotazioni chiuse', consegnata:'Consegnata'};
+const STATO = {bozza:'Bozza: non pubblicata', aperta:'Aperta', chiusa:'Prenotazioni chiuse', consegnata:'Consegnata'};
 const fmtDT = s => s ? new Date(s).toLocaleString('it-IT',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 const fmtDTlong = s => s ? new Date(s).toLocaleString('it-IT',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : '—';
 const fmtD = s => s ? new Date(s+'T12:00').toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'short'}) : '—';
@@ -90,6 +90,10 @@ const ICON = {
   wa:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3.5 20.5l1.3-4.2A8.5 8.5 0 1 1 8 19.5z"/></svg>',
   back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   link:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+  eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  xls:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M9 13l6 5M15 13l-6 5"/></svg>',
+  phone:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
 };
 
 /* ---------- dati (Firebase / Firestore) ---------- */
@@ -127,7 +131,8 @@ async function put(c, id, data){
   try {
     const b = fs.writeBatch(db);
     b.set(dref(c, id), pick(c, row));
-    if (c === 'ordinazioni') b.set(dref('pubbliche', id), pubDoc(row));
+    // Le bozze non hanno copia pubblica: i clienti non possono vederle.
+    if (c === 'ordinazioni') { if (row.stato === 'bozza') b.delete(dref('pubbliche', id)); else b.set(dref('pubbliche', id), pubDoc(row)); }
     await b.commit();
   } catch (e) { toast(errMsg(e), true); }
 }
@@ -146,7 +151,7 @@ async function saveSetting(k, v){
   catch (e) { toast(errMsg(e), true); }
 }
 async function syncPubbliche(){
-  const list = [...S.ordinazioni.values()].filter(o => o.stato !== 'consegnata' && o.chiusura);
+  const list = [...S.ordinazioni.values()].filter(o => o.stato !== 'consegnata' && o.stato !== 'bozza' && o.chiusura);
   if (!list.length) return;
   try { const b = fs.writeBatch(db); for (const o of list) b.set(dref('pubbliche', o.id), pubDoc(o)); await b.commit(); }
   catch (e) { toast(errMsg(e), true); }
@@ -215,7 +220,7 @@ async function afterLogin(){
     if (/permission/i.test(String(e?.code || e?.message))) { phase = 'notadmin'; render(); return; }
     phase = 'error'; loginErr = errMsg(e); render(); return;
   }
-  phase = 'app'; render(); linkClienti();
+  phase = 'app'; render(); linkClienti(); suggerisciGesture();
   if (SET.app_url !== appUrl()) await saveSetting('app_url', appUrl());
   if (!SET.notifiche && SET.ntfy_topic) await saveSetting('notifiche', [{tipo:'ntfy', attivo:true, topic:SET.ntfy_topic}]);
   syncPubbliche();
@@ -224,6 +229,7 @@ async function afterLogin(){
 /* ---------- calcoli ---------- */
 const ordini = () => [...S.ordinazioni.values()].sort((a,b) => String(b.chiusura||'').localeCompare(String(a.chiusura||'')));
 function ordState(o){
+  if (o.stato === 'bozza') return 'bozza';
   if (o.stato === 'consegnata') return 'consegnata';
   if (o.stato === 'chiusa') return 'chiusa';
   if (o.chiusura && new Date(o.chiusura) < new Date()) return 'chiusa';
@@ -408,14 +414,16 @@ function confirmDo(title, text, okLabel, fn){
 }
 
 /* ---------- nav ---------- */
-const NAV = [['dashboard','Dashboard','dash'],['ordinazioni','Ordinazioni','ord'],['prodotti','Prodotti','prod'],['membri','Membri','mem']];
-function route(){ return location.hash.slice(1) || 'dashboard'; }
+const NAV = [['dashboard','Dashboard','dash'],['ordinazioni','Ordinazioni','ord'],['prodotti','Prodotti','prod'],['clienti','Clienti','mem']];
+function route(){ const r = location.hash.slice(1) || 'dashboard'; return r === 'membri' ? 'clienti' : r; }
+// Sezione principale a cui appartiene la schermata (per la barra e per lo swipe).
+const sezione = r => r.startsWith('ord-') ? 'ordinazioni' : r.startsWith('cliente-') ? 'clienti' : r;
 function renderNav(){
   const inApp = phase === 'app';
   $('#tabbar').hidden = !inApp; $('#navTop').hidden = !inApp; $('#settingsBtn').hidden = !inApp;
   const sy = $('#sync');
   if (!inApp) { sy.innerHTML = ''; return; }
-  const r = route(); const sec = r.startsWith('ord-') ? 'ordinazioni' : r;
+  const r = route(); const sec = sezione(r);
   const nl = nonLette().length;
   const html = NAV.map(([k,l,i]) => `<a href="#${k}" ${sec===k?'aria-current="page"':''}>${ICON[i]}<span>${l}${k==='ordinazioni'&&nl?`<span class="badge">${nl}</span>`:''}</span></a>`).join('');
   $('#navTop').innerHTML = html; $('#navBottom').innerHTML = html;
@@ -437,9 +445,13 @@ function render(){
   if (r.startsWith('ord-')) html = viewOrdine(r.slice(4));
   else if (r === 'ordinazioni') html = viewOrdini();
   else if (r === 'prodotti') html = viewProdotti();
-  else if (r === 'membri') html = viewMembri();
+  else if (r === 'clienti') html = viewClienti();
+  else if (r.startsWith('cliente-')) html = viewCliente(r.slice(8));
   else html = viewDashboard();
+  // Se stavi scrivendo nella ricerca clienti, il cursore resta dov'era anche quando arrivano dati nuovi.
+  const foc = document.activeElement?.id === 'cliQ' ? document.activeElement.selectionStart : null;
   app.innerHTML = html;
+  if (foc !== null) { const i = $('#cliQ'); if (i) { i.focus(); try { i.setSelectionRange(foc, foc); } catch {} } }
 }
 function viewConfig(){
   return `<div class="authbox panel"><h1>Quasi pronto</h1><p class="muted" style="margin:0">Manca il collegamento al database. Su GitHub imposta le variabili <b>FIREBASE_API_KEY</b>, <b>FIREBASE_PROJECT_ID</b> e <b>FIREBASE_APP_ID</b> (Settings → Secrets and variables → Actions → Variables) e ripubblica il sito, come spiegato nella guida <b>LEGGIMI-FIREBASE.md</b>.</p></div>`;
@@ -516,7 +528,7 @@ function viewDashboard(){
   const maxG = Math.max(...ps.map(p => p.guadagno), 0.01);
   const nuove = nonLette().sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
   return `<div class="stack">
-    <div class="row between"><div><div class="eyebrow">Riepilogo di tutte le ordinazioni</div><h1>Dashboard</h1></div><button class="btn primary" data-act="newOrd">${ICON.plus}Nuova ordinazione</button></div>
+    <div class="row between"><div><div class="eyebrow">Riepilogo di tutte le ordinazioni</div><h1>Dashboard</h1></div><div class="row" style="gap:8px"><button class="btn" data-act="xlsAll">${ICON.xls}Excel</button><button class="btn primary" data-act="newOrd">${ICON.plus}Nuova ordinazione</button></div></div>
     ${nuove.length ? `<section class="panel" style="border-color:var(--peel)"><div class="row between"><h2>${nuove.length} nuov${nuove.length===1?'a prenotazione':'e prenotazioni'}</h2><button class="btn sm" data-act="readAll">Segna tutte come lette</button></div>
       <div class="list">${nuove.slice(0,6).map(p => { const o = S.ordinazioni.get(p.ord_id); if (!o) return ''; return `<a class="li" href="#ord-${o.id}" data-act="openPrenOrd" data-id="${p.id}" style="text-decoration:none"><div class="main"><div class="t">${esc(nomeDi(p))}</div><div class="d">${esc(o.titolo)} · ${fmtAgo(p.created_at)}</div></div><div class="side"><b>${fmtE(prenTot(p,o).ricavo)}</b></div></a>`; }).join('')}</div></section>` : ''}
     <div class="kpis">
@@ -533,13 +545,14 @@ function viewDashboard(){
       <section class="panel chart"><div class="row between" style="margin-bottom:8px"><h2>Ricavi e guadagno per ordinazione</h2><div class="legend"><span><i style="background:var(--cost)"></i>Costo FdA</span><span><i style="background:var(--leaf)"></i>Guadagno</span></div></div>${barChart(os.slice(0,8).reverse(), stats)}</section>
       <section class="panel"><h2 style="margin-bottom:12px">Prodotti che rendono di più</h2>${ps.length ? `<div class="pbar">${ps.map(p => `<div class="r"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(p.nome)}</b> <span class="muted small">${fmtQ(p.q)} ${esc(p.unita)}</span></span><span class="${signCls(p.guadagno)}">${fmtE(p.guadagno)}</span><div class="track"><div class="fill" style="width:${Math.max(2,p.guadagno/maxG*100)}%"></div></div></div>`).join('')}</div>` : '<p class="muted small">Appariranno qui quando arrivano le prime prenotazioni.</p>'}</section>
     </div>
+    ${pannelliAnalisi()}
   </div>`;
 }
 function orderCard(o, st){
   const s = ordState(o); const nl = nonLette(o.id).length;
   return `<a class="ocard ${s==='aperta'?'open':''}" href="#ord-${o.id}">
     <div class="row between"><h3 style="min-width:0">${esc(o.titolo)}</h3><span class="row" style="gap:6px">${nl?`<span class="chip new">${nl} nuov${nl===1?'a':'e'}</span>`:''}<span class="chip st-${s}">${STATO[s]}</span></span></div>
-    <div class="small">${s==='aperta' ? `<span class="deadline">${countdown(o.chiusura)}</span> · ${fmtDT(o.chiusura)}` : `Chiusa ${fmtDT(o.chiusura)}`}${o.consegna?` · consegna ${fmtD(o.consegna)}`:''}</div>
+    <div class="small">${s==='aperta' ? `<span class="deadline">${countdown(o.chiusura)}</span> · ${fmtDT(o.chiusura)}` : s==='bozza' ? `Da pubblicare · chiusura ${fmtDT(o.chiusura)}` : `Chiusa ${fmtDT(o.chiusura)}`}${o.consegna?` · consegna ${fmtD(o.consegna)}`:''}</div>
     <div class="nums"><div><b>${st.n}</b><span>prenotazioni</span></div><div><b>${fmtE(st.ricavo)}</b><span>ricavo</span></div><div><b class="${signCls(st.guadagno)}">${fmtE(st.guadagno)}</b><span>guadagno</span></div></div>
   </a>`;
 }
@@ -569,7 +582,7 @@ function viewOrdini(){
   const f = (k,l) => `<button type="button" class="${ordFilter===k?'on':''}" data-act="filter" data-id="${k}">${l}</button>`;
   return `<div class="stack">
     <div class="row between"><h1>Ordinazioni</h1><button class="btn primary" data-act="newOrd">${ICON.plus}Nuova</button></div>
-    <div class="seg">${f('tutte','Tutte')}${f('aperta','Aperte')}${f('chiusa','Chiuse')}${f('consegnata','Consegnate')}</div>
+    <div class="seg">${f('tutte','Tutte')}${S.ordinazioni.size && [...S.ordinazioni.values()].some(o => o.stato === 'bozza') ? f('bozza','Bozze') : ''}${f('aperta','Aperte')}${f('chiusa','Chiuse')}${f('consegnata','Consegnate')}</div>
     <div class="panel">${os.length ? `<div class="list">${os.map(o => { const s = ordState(o), st = ordStats(o), nl = nonLette(o.id).length; return `
       <a class="li" href="#ord-${o.id}" style="text-decoration:none">
         <div class="main"><div class="t">${esc(o.titolo)}</div><div class="d">Chiusura ${fmtDT(o.chiusura)} · ${st.n} prenotazion${st.n===1?'e':'i'}</div><div class="row" style="margin-top:6px;gap:6px"><span class="chip st-${s}">${STATO[s]}</span>${nl?`<span class="chip new">${nl} nuov${nl===1?'a':'e'}</span>`:''}</div></div>
@@ -594,13 +607,18 @@ function viewOrdine(id){
       <h1>${esc(o.titolo)}</h1>
       <div class="small muted">Prenotazioni entro ${fmtDT(o.chiusura)}${o.consegna?` · consegna ${fmtD(o.consegna)}`:''}</div>
     </div>
-    <div class="row" style="gap:8px">
+    ${s==='bozza' ? `<section class="panel bozza-box"><h2>Bozza: i clienti non la vedono ancora</h2>
+      <p class="small" style="margin:4px 0 10px">Controlla prodotti, prezzi e date nell'anteprima. Quando è tutto giusto premi <b>Pubblica</b>: da quel momento il link accetta prenotazioni.</p>
+      <div class="row" style="gap:8px"><button class="btn" data-act="previewOrd" data-id="${o.id}">${ICON.eye}Anteprima</button><button class="btn primary" data-act="publishOrd" data-id="${o.id}">Pubblica</button><button class="btn" data-act="editOrd" data-id="${o.id}">Modifica</button><button class="btn danger" data-act="delOrd" data-id="${o.id}">Elimina</button></div></section>` : ''}
+    <div class="row" style="gap:8px" ${s==='bozza'?'hidden':''}>
       <button class="btn primary" data-act="newPren" data-id="${o.id}">${ICON.plus}Prenotazione</button>
       <button class="btn" data-act="copyLink" data-id="${o.id}">${ICON.link}Link clienti</button>
+      <button class="btn" data-act="previewOrd" data-id="${o.id}">${ICON.eye}Anteprima</button>
+      <button class="btn" data-act="xlsOrd" data-id="${o.id}">${ICON.xls}Excel</button>
       <button class="btn" data-act="editOrd" data-id="${o.id}">Modifica</button>
       ${s==='aperta' ? `<button class="btn" data-act="closeOrd" data-id="${o.id}">Chiudi prenotazioni</button>` : ''}
       ${s==='chiusa' ? `<button class="btn" data-act="deliverOrd" data-id="${o.id}">Segna consegnata</button>` : ''}
-      ${s!=='aperta' ? `<button class="btn" data-act="reopenOrd" data-id="${o.id}">Riapri</button>` : ''}
+      ${s==='chiusa'||s==='consegnata' ? `<button class="btn" data-act="reopenOrd" data-id="${o.id}">Riapri</button>` : ''}
       <button class="btn" data-act="dupOrd" data-id="${o.id}">Duplica</button>
       <button class="btn danger" data-act="delOrd" data-id="${o.id}">Elimina</button>
     </div>
@@ -621,8 +639,9 @@ function tabPrenotazioni(o, st){
   <div class="list">${st.prens.map(p => {
     const t = prenTot(p, o);
     const items = (o.prodotti||[]).filter(it => num(p.righe?.[it.pid])>0).map(it => `${fmtQ(num(p.righe[it.pid]))} ${esc(it.unita)} ${esc(it.nome)}`).join(' · ');
-    return `<div class="li ${p.letta===false?'unread':''}">
-      <div class="main"><div class="t">${esc(nomeDi(p))} ${p.letta===false?'<span class="chip new">Nuova</span>':''}</div>
+    return `<div class="li swrow ${p.letta===false?'unread':''}" data-sw="${p.id}">
+      <div class="swbg l">${p.pagato ? '↺ Da pagare' : '✓ Pagato'}</div><div class="swbg r">${p.consegnato ? 'Non consegnato ↺' : 'Consegnato ✓'}</div>
+      <div class="swin"><div class="main"><div class="t">${esc(nomeDi(p))} ${p.letta===false?'<span class="chip new">Nuova</span>':''}</div>
         <div class="d">${items || 'Nessun prodotto'}</div>
         <div class="d">${p.origine==='cliente'?'Dal link':'Inserita da te'} · ${fmtAgo(p.created_at)}${p.telefono?' · '+esc(p.telefono):''}</div>
         ${p.nota?`<div class="d" style="font-style:italic">“${esc(p.nota)}”</div>`:''}
@@ -634,8 +653,8 @@ function tabPrenotazioni(o, st){
       </div>
       <div class="side"><b>${fmtE(t.ricavo)}</b><span class="small ${signCls(t.guadagno)}">+${fmtE(t.guadagno)}</span>
         <div class="row" style="gap:4px"><button class="btn sm" data-act="editPren" data-id="${p.id}">Modifica</button><button class="btn sm ghost danger" data-act="delPren" data-id="${p.id}" aria-label="Elimina prenotazione">✕</button></div>
-      </div>
-    </div>`; }).join('')}</div></div>`;
+      </div></div>
+    </div>`; }).join('')}</div>${matchMedia('(pointer: coarse)').matches ? '<p class="small muted" style="margin:8px 0 0">Scorri una prenotazione verso destra per segnarla pagata, verso sinistra per segnarla consegnata.</p>' : ''}</div>`;
 }
 function tabRiepilogo(o, st){
   if (!st.rows.length) return `<div class="panel empty"><p>Questa ordinazione non ha prodotti.</p><button class="btn primary" data-act="editOrd" data-id="${o.id}">Scegli i prodotti</button></div>`;
@@ -657,6 +676,7 @@ function msgBlock(title, sub, text, key){
 function tabMessaggi(o, st){
   MSGS = {ann: msgAnnuncio(o), forn: msgFornitore(o), cons: msgConsegne(o)};
   return `<div class="stack" style="gap:16px">
+    ${ordState(o)==='bozza' ? `<div class="panel small bozza-box">L'ordinazione è ancora una <b>bozza</b>: pubblicala prima di inviare l'annuncio, altrimenti il link mostra "nessuna ordinazione aperta".</div>` : ''}
     ${msgBlock('Annuncio per il gruppo', 'Prodotti, prezzi, scadenza e il link da cui i clienti prenotano.', MSGS.ann, 'ann')}
     ${msgBlock("Ordine per Forme dell'Anima", 'Quantità totali da ordinare e importo da pagare al fornitore.', MSGS.forn, 'forn')}
     ${st.n ? msgBlock('Lista consegne', 'Chi riceve cosa e chi deve ancora pagare.', MSGS.cons, 'cons') : ''}
@@ -675,22 +695,6 @@ function viewProdotti(){
   return `<div class="stack">
     <div class="row between"><div><h1>Prodotti</h1><div class="small muted">Prezzi di partenza: ogni ordinazione può cambiarli.</div></div><button class="btn primary" data-act="newProd">${ICON.plus}Nuovo prodotto</button></div>
     ${group('agrumi')}${group('fda')}
-  </div>`;
-}
-function viewMembri(){
-  const ms = [...S.membri.values()].sort((a,b) => a.nome.localeCompare(b.nome,'it'));
-  const agg = new Map();
-  for (const p of S.prenotazioni.values()) {
-    const o = S.ordinazioni.get(p.ord_id); if (!o) continue;
-    const a = agg.get(p.membro_id) || {n:0, speso:0, debito:0};
-    const t = prenTot(p,o).ricavo; a.n++; a.speso += t; if (!p.pagato) a.debito += t; agg.set(p.membro_id, a);
-  }
-  return `<div class="stack">
-    <div class="row between"><div><h1>Membri</h1><div class="small muted">Si aggiungono da soli quando qualcuno prenota dal link.</div></div><button class="btn primary" data-act="newMem">${ICON.plus}Nuovo membro</button></div>
-    <div class="panel">${ms.length ? `<div class="list">${ms.map(m => { const a = agg.get(m.id) || {n:0,speso:0,debito:0}; return `<div class="li">
-      <div class="main"><div class="t">${esc(m.nome)}</div><div class="d">${m.telefono?esc(m.telefono)+' · ':''}${a.n} prenotazion${a.n===1?'e':'i'} · speso ${fmtE(a.speso)}</div>${m.note?`<div class="d">${esc(m.note)}</div>`:''}</div>
-      <div class="side">${a.debito>0?`<span class="chip bad">deve ${fmtE(a.debito)}</span>`:`<span class="chip ok">in regola</span>`}<button class="btn sm" data-act="editMem" data-id="${m.id}">Modifica</button></div>
-    </div>`; }).join('')}</div>` : `<p class="muted" style="margin:0">Nessun membro ancora.</p>`}</div>
   </div>`;
 }
 
@@ -765,10 +769,10 @@ function formOrdine(o, dup){
       }
       if (!prodotti.length) { toast('Scegli almeno un prodotto', true); return false; }
       const id = editing ? o.id : uid();
-      let stato = editing ? o.stato : 'aperta';
+      let stato = editing ? o.stato : 'bozza';
       if (editing && stato === 'chiusa' && new Date(chiusura) > new Date() && o.riapri) stato = 'aperta';
       put('ordinazioni', id, {titolo, chiusura, consegna:f.querySelector('#o-consegna').value, note:f.querySelector('#o-note').value.trim(), prodotti, stato});
-      if (!editing) { ordTab = 'messaggi'; location.hash = 'ord-' + id; toast('Ordinazione creata: copia il messaggio per il gruppo'); }
+      if (!editing) { ordTab = 'riepilogo'; location.hash = 'ord-' + id; toast('Bozza creata: controlla l\'anteprima, poi premi Pubblica'); }
       else toast('Ordinazione salvata');
     }
   });
@@ -851,7 +855,7 @@ function formProd(p){
   });
 }
 function formMem(m){
-  openDialog(m ? 'Modifica membro' : 'Nuovo membro', `
+  openDialog(m ? 'Modifica cliente' : 'Nuovo cliente', `
     <label class="f">Nome<input id="m-nome" required value="${esc(m?.nome||'')}"></label>
     <label class="f">Telefono<input id="m-tel" type="tel" inputmode="tel" value="${esc(m?.telefono||'')}" placeholder="Es. 333 123 4567"></label>
     <label class="f">Note<input id="m-note" value="${esc(m?.note||'')}" placeholder="Es. ritira sempre il sabato"></label>`, {
@@ -859,7 +863,7 @@ function formMem(m){
     onSubmit: f => {
       const nome = f.querySelector('#m-nome').value.trim(); if (!nome) { toast('Inserisci il nome', true); return false; }
       put('membri', m?.id || uid(), {nome, telefono:f.querySelector('#m-tel').value.trim(), note:f.querySelector('#m-note').value.trim()});
-      toast('Membro salvato');
+      toast('Cliente salvato');
     }
   });
 }
@@ -926,6 +930,374 @@ function formSettings(){
   });
 }
 
+/* ---------- anteprima e pubblicazione ---------- */
+let anteprimaDati = null;
+const datiPubblici = o => ({id:o.id, titolo:o.titolo, chiusura:o.chiusura, consegna:o.consegna || '', note:o.note || '',
+  prodotti:(o.prodotti || []).map(p => ({pid:p.pid, nome:p.nome, categoria:p.categoria, unita:p.unita, pp:num(p.pp)}))});
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || e.data?.tipo !== 'anteprima-pronta' || !anteprimaDati) return;
+  e.source?.postMessage({tipo:'anteprima', ordine:anteprimaDati}, location.origin);
+});
+function anteprima(id){
+  const o = S.ordinazioni.get(id); if (!o) return;
+  anteprimaDati = datiPubblici(o);
+  const bozza = ordState(o) === 'bozza';
+  openDialog('Anteprima', `
+    <div class="small muted">Così i clienti vedranno la pagina di prenotazione${bozza ? ' dopo la pubblicazione' : ''}. Puoi provare a scegliere i prodotti: l'invio è disattivato.</div>
+    <iframe class="prev-frame" src="ordina.html?anteprima=1" title="Anteprima della pagina clienti"></iframe>
+    <details><summary class="small" style="cursor:pointer;font-weight:600">Messaggio per il gruppo WhatsApp</summary><div class="msg">${esc(msgAnnuncio(o))}</div></details>`, {
+    ok: bozza ? 'Pubblica' : 'Chiudi', noOk: !bozza,
+    extra: `<button type="button" class="btn" data-act="editOrd" data-id="${o.id}" style="margin-right:auto">Modifica</button>`,
+    onSubmit: () => { dlg.close(); setTimeout(() => pubblica(id), 30); return false; },
+  });
+}
+function pubblica(id){
+  const o = S.ordinazioni.get(id); if (!o) return;
+  const problemi = [];
+  if (!(o.prodotti || []).length) problemi.push('non ci sono prodotti');
+  if ((o.prodotti || []).some(p => !(num(p.pp) > 0))) problemi.push('qualche prodotto ha il prezzo al pubblico a zero');
+  if (!o.chiusura || new Date(o.chiusura) <= new Date(Date.now() + 10*6e4)) problemi.push('la data di chiusura è già passata o troppo vicina');
+  if (problemi.length) {
+    openDialog('Controlla prima di pubblicare', `<p style="margin:0">Non posso pubblicare: ${problemi.join('; ')}.</p>`, {ok:'Modifica', onSubmit: () => { dlg.close(); setTimeout(() => formOrdine(o), 30); return false; }});
+    return;
+  }
+  openDialog('Pubblicare l\'ordinazione?', `<p style="margin:0">Da adesso chi ha il link potrà prenotare <b>${(o.prodotti||[]).length} prodott${o.prodotti.length===1?'o':'i'}</b> fino a <b>${esc(fmtDTlong(o.chiusura))}</b>.</p>
+    <p class="small muted" style="margin:8px 0 0">Dopo la pubblicazione copia l'annuncio dalla scheda Messaggi e incollalo nel gruppo WhatsApp.</p>`, {
+    ok: 'Pubblica',
+    onSubmit: () => { put('ordinazioni', id, {stato:'aperta'}); ordTab = 'messaggi'; location.hash = 'ord-' + id; render(); toast('Pubblicata: ora copia l\'annuncio per il gruppo'); },
+  });
+}
+
+/* ---------- clienti: statistiche e resoconto ---------- */
+function clienteStats(mid){
+  const prens = [...S.prenotazioni.values()].filter(p => p.membro_id === mid)
+    .map(p => ({p, o:S.ordinazioni.get(p.ord_id)})).filter(x => x.o)
+    .sort((a,b) => String(b.o.chiusura||'').localeCompare(String(a.o.chiusura||'')));
+  let speso = 0, debito = 0, pagato = 0; const prod = new Map();
+  for (const {p, o} of prens) {
+    const t = prenTot(p, o).ricavo; speso += t; if (p.pagato) pagato += t; else debito += t;
+    for (const it of o.prodotti || []) {
+      const q = num(p.righe?.[it.pid]); if (!(q > 0)) continue;
+      const c = prod.get(it.pid) || {nome:it.nome, unita:it.unita, q:0, spesa:0, volte:0};
+      c.q += q; c.spesa += q*it.pp; c.volte++; prod.set(it.pid, c);
+    }
+  }
+  return {prens, n:prens.length, speso, debito, pagato, media:prens.length ? speso/prens.length : 0,
+    prodotti:[...prod.values()].sort((a,b) => b.volte - a.volte || b.spesa - a.spesa), ultima:prens[0]?.o, prima:prens[prens.length-1]?.o};
+}
+function msgResoconto(m){
+  const st = clienteStats(m.id);
+  const L = [`Ciao ${String(m.nome).split(' ')[0]}! Ecco il riepilogo delle tue prenotazioni di agrumi bio e prodotti di Forme dell'Anima:`, ''];
+  if (!st.n) L.push('Non risultano ancora prenotazioni.');
+  for (const {p, o} of st.prens) L.push(`• ${o.titolo}${o.consegna ? ` (consegna ${fmtD(o.consegna)})` : ''}: ${fmtE(prenTot(p,o).ricavo)} — ${p.pagato ? 'pagato ✅' : 'da pagare'}`);
+  if (st.n) {
+    L.push('', `Totale prenotato: *${fmtE(st.speso)}*`);
+    L.push(st.debito > 0 ? `Da pagare: *${fmtE(st.debito)}*` : 'Sei in regola con i pagamenti, grazie!');
+    if (st.prodotti[0]) L.push('', `Il tuo prodotto preferito: ${st.prodotti[0].nome}`);
+  }
+  return L.join('\n');
+}
+// Analisi generale su clienti e ordinazioni pubblicate.
+function analisi(){
+  const os = ordini().filter(o => o.stato !== 'bozza');
+  const ultime = os.slice(0, 3).map(o => o.id), ultimaId = os[0]?.id;
+  const perCliente = new Map(); let agr = 0, fda = 0, nPren = 0;
+  for (const p of S.prenotazioni.values()) {
+    const o = S.ordinazioni.get(p.ord_id); if (!o || o.stato === 'bozza') continue;
+    nPren++;
+    const k = p.membro_id || 'n:' + String(p.nome).toLowerCase();
+    const c = perCliente.get(k) || {id:p.membro_id, nome:nomeDi(p), ordini:new Set(), speso:0, debito:0};
+    const t = prenTot(p, o).ricavo; c.speso += t; if (!p.pagato) c.debito += t; c.ordini.add(o.id); perCliente.set(k, c);
+    for (const it of o.prodotti || []) { const v = num(p.righe?.[it.pid]) * it.pp; if (it.categoria === 'fda') fda += v; else agr += v; }
+  }
+  const cl = [...perCliente.values()];
+  const attivi = cl.filter(c => [...c.ordini].some(id => ultime.includes(id))).length;
+  const nuovi = ultimaId ? cl.filter(c => c.ordini.size === 1 && c.ordini.has(ultimaId)).length : 0;
+  const ricorrenti = cl.filter(c => c.ordini.size > 1).length;
+  const tot = cl.reduce((s, c) => s + c.speso, 0);
+  return {os, cl, attivi, nuovi, ricorrenti, nPren, agr, fda,
+    top:[...cl].sort((a,b) => b.speso - a.speso).slice(0, 6),
+    debitori:cl.filter(c => c.debito > 0.005).sort((a,b) => b.debito - a.debito),
+    scontrino:nPren ? tot/nPren : 0, perOrdine:os.length ? nPren/os.length : 0};
+}
+
+/* ---------- foglio di calcolo (Excel) ---------- */
+const XLSX_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+let xlsxCarico = null;
+function caricaXLSX(){
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return xlsxCarico ||= new Promise((ok, ko) => {
+    const s = document.createElement('script'); s.src = XLSX_URL; s.crossOrigin = 'anonymous';
+    s.onload = () => ok(window.XLSX); s.onerror = () => { xlsxCarico = null; ko(new Error('rete')); };
+    document.head.appendChild(s);
+  });
+}
+const EURF = '#,##0.00 "€"';
+const xE = v => ({t:'n', v:Math.round((v||0)*100)/100, z:EURF});
+const xN = v => ({t:'n', v:Math.round((v||0)*100)/100});
+const xP = (g, r) => r > 0 ? {t:'n', v:g/r, z:'0%'} : '';
+const xD = s => s ? new Date(s).toLocaleString('it-IT', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+const xDd = s => s ? new Date(s + 'T12:00').toLocaleDateString('it-IT') : '';
+const nomeFile = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 60) || 'export';
+function foglio(X, righe, larghezze){
+  const ws = X.utils.aoa_to_sheet(righe);
+  ws['!cols'] = larghezze.map(w => ({wch:w}));
+  return ws;
+}
+async function scarica(crea, nome){
+  toast('Preparo il foglio di calcolo…');
+  let X;
+  try { X = await caricaXLSX(); } catch { toast('Non riesco a caricare il generatore di Excel: controlla la connessione', true); return; }
+  const wb = X.utils.book_new();
+  for (const [titolo, righe, larg] of crea()) X.utils.book_append_sheet(wb, foglio(X, righe, larg), titolo.slice(0, 31));
+  const buf = X.write(wb, {bookType:'xlsx', type:'array'});
+  const file = new File([buf], nome + '.xlsx', {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({files:[file]})) {
+    try { await navigator.share({files:[file], title:nome}); return; } catch (e) { if (e?.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+  toast('Foglio di calcolo scaricato');
+}
+const testoProdotti = (p, o) => (o.prodotti || []).filter(it => num(p.righe?.[it.pid]) > 0).map(it => `${fmtQ(num(p.righe[it.pid]))} ${it.unita} ${it.nome}`).join(', ');
+function fogliOrdine(o){
+  const st = ordStats(o), s = ordState(o);
+  const riepilogo = [
+    ['Ordinazione', o.titolo], ['Stato', STATO[s]], ['Chiusura prenotazioni', xD(o.chiusura)], ['Consegna', xDd(o.consegna)],
+    ['Prenotazioni', st.n], ['Ricavo', xE(st.ricavo)], ["Costo Forme dell'Anima", xE(st.costo)], ['Guadagno', xE(st.guadagno)],
+    ['Margine', xP(st.guadagno, st.ricavo)], ['Incassato', xE(st.incassato)], ['Da incassare', xE(st.daIncassare)], [],
+    ['Prodotto', 'Categoria', 'Unità', 'Prezzo pubblico', 'Prezzo FdA', 'Margine unitario', 'Quantità', 'Ricavo', 'Costo FdA', 'Guadagno'],
+    ...st.rows.map(r => [r.nome, CAT[r.categoria] || '', r.unita, xE(r.pp), xE(r.pf), xE(r.pp - r.pf), xN(r.q), xE(r.ricavo), xE(r.costo), xE(r.guadagno)]),
+    ['Totale', '', '', '', '', '', '', xE(st.ricavo), xE(st.costo), xE(st.guadagno)],
+  ];
+  const prods = o.prodotti || [];
+  const pren = [['Cliente', 'Telefono', ...prods.map(p => `${p.nome} (${p.unita})`), 'Totale', 'Costo FdA', 'Guadagno', 'Pagato', 'Consegnato', 'Origine', 'Data', 'Nota', 'Link stato'],
+    ...st.prens.map(p => { const t = prenTot(p, o); return [nomeDi(p), p.telefono || S.membri.get(p.membro_id)?.telefono || '', ...prods.map(it => num(p.righe?.[it.pid]) || ''),
+      xE(t.ricavo), xE(t.costo), xE(t.guadagno), p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', p.origine === 'cliente' ? 'link' : 'gestore', xD(p.created_at), p.nota || '', linkStato(p.id)]; })];
+  const fda = [['Prodotto', 'Unità', 'Quantità', 'Prezzo FdA', 'Importo'],
+    ...st.rows.filter(r => r.q > 0).map(r => [r.nome, r.unita, xN(r.q), xE(r.pf), xE(r.costo)]), ['Totale', '', '', '', xE(st.costo)]];
+  return [['Riepilogo', riepilogo, [24, 26, 10, 14, 12, 14, 10, 12, 12, 12]],
+    ['Prenotazioni', pren, [22, 15, ...prods.map(() => 12), 11, 11, 11, 8, 11, 9, 16, 30, 40]],
+    ["Ordine Forme dell'Anima", fda, [26, 10, 10, 12, 12]]];
+}
+function fogliTutto(){
+  const os = ordini();
+  const ordRighe = [['Ordinazione', 'Stato', 'Chiusura', 'Consegna', 'Prenotazioni', 'Ricavo', 'Costo FdA', 'Guadagno', 'Margine', 'Incassato', 'Da incassare'],
+    ...os.map(o => { const st = ordStats(o); return [o.titolo, STATO[ordState(o)], xD(o.chiusura), xDd(o.consegna), st.n, xE(st.ricavo), xE(st.costo), xE(st.guadagno), xP(st.guadagno, st.ricavo), xE(st.incassato), xE(st.daIncassare)]; })];
+  const prenRighe = [['Ordinazione', 'Chiusura', 'Cliente', 'Telefono', 'Prodotti', 'Totale', 'Costo FdA', 'Guadagno', 'Pagato', 'Consegnato', 'Origine', 'Data', 'Nota']];
+  for (const o of os) for (const p of prenOf(o.id)) { const t = prenTot(p, o); prenRighe.push([o.titolo, xD(o.chiusura), nomeDi(p), p.telefono || S.membri.get(p.membro_id)?.telefono || '', testoProdotti(p, o), xE(t.ricavo), xE(t.costo), xE(t.guadagno), p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', p.origine === 'cliente' ? 'link' : 'gestore', xD(p.created_at), p.nota || '']); }
+  const prodRighe = [['Prodotto', 'Categoria', 'Unità', 'Quantità venduta', 'Ordinazioni', 'Ricavo', 'Costo FdA', 'Guadagno', 'Margine'],
+    ...[...prodStats().values()].sort((a,b) => b.ricavo - a.ricavo).map(p => [p.nome, CAT[p.categoria] || '', p.unita, xN(p.q), p.ordini, xE(p.ricavo), xE(p.costo), xE(p.guadagno), xP(p.guadagno, p.ricavo)])];
+  return [['Ordinazioni', ordRighe, [28, 20, 17, 11, 12, 12, 12, 12, 9, 12, 12]], ['Prenotazioni', prenRighe, [26, 17, 22, 15, 50, 11, 11, 11, 8, 11, 9, 17, 30]],
+    ['Prodotti', prodRighe, [26, 16, 10, 15, 12, 12, 12, 12, 9]], ...fogliClienti()];
+}
+function fogliClienti(){
+  const righe = [['Cliente', 'Telefono', 'Note', 'Prenotazioni', 'Totale speso', 'Spesa media', 'Pagato', 'Da pagare', 'Prima ordinazione', 'Ultima ordinazione', 'Prodotto preferito']];
+  for (const m of [...S.membri.values()].sort((a,b) => a.nome.localeCompare(b.nome, 'it'))) {
+    const st = clienteStats(m.id);
+    righe.push([m.nome, m.telefono || '', m.note || '', st.n, xE(st.speso), xE(st.media), xE(st.pagato), xE(st.debito), st.prima?.titolo || '', st.ultima?.titolo || '', st.prodotti[0]?.nome || '']);
+  }
+  return [['Clienti', righe, [24, 15, 24, 12, 13, 12, 12, 12, 24, 24, 22]]];
+}
+function fogliCliente(m){
+  const st = clienteStats(m.id);
+  const res = [['Resoconto cliente', m.nome], ['Telefono', m.telefono || ''], ['Note', m.note || ''], ['Prenotazioni', st.n], ['Totale speso', xE(st.speso)],
+    ['Spesa media', xE(st.media)], ['Pagato', xE(st.pagato)], ['Da pagare', xE(st.debito)], ['Prodotto preferito', st.prodotti[0]?.nome || ''], ['Generato il', new Date().toLocaleString('it-IT')]];
+  const storico = [['Ordinazione', 'Chiusura', 'Consegna', 'Prodotti', 'Totale', 'Pagato', 'Consegnato', 'Nota', 'Link stato'],
+    ...st.prens.map(({p, o}) => [o.titolo, xD(o.chiusura), xDd(o.consegna), testoProdotti(p, o), xE(prenTot(p, o).ricavo), p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', p.nota || '', linkStato(p.id)])];
+  const dett = [['Ordinazione', 'Prodotto', 'Unità', 'Quantità', 'Prezzo', 'Importo']];
+  for (const {p, o} of st.prens) for (const it of o.prodotti || []) { const q = num(p.righe?.[it.pid]); if (q > 0) dett.push([o.titolo, it.nome, it.unita, xN(q), xE(it.pp), xE(q*it.pp)]); }
+  const pref = [['Prodotto', 'Unità', 'Quantità totale', 'Volte', 'Spesa'], ...st.prodotti.map(x => [x.nome, x.unita, xN(x.q), x.volte, xE(x.spesa)])];
+  return [['Resoconto', res, [20, 30]], ['Prenotazioni', storico, [28, 17, 11, 50, 11, 8, 11, 30, 40]], ['Dettaglio prodotti', dett, [28, 26, 10, 10, 10, 11]], ['Prodotti preferiti', pref, [26, 10, 15, 8, 12]]];
+}
+
+/* ---------- viste clienti (anagrafe) ---------- */
+let cliQ = '', cliSort = 'nome';
+function righeClienti(){
+  const q = norm(cliQ.trim());
+  const dati = [...S.membri.values()].map(m => ({m, st:clienteStats(m.id)}))
+    .filter(({m}) => !q || norm(m.nome).includes(q) || String(m.telefono||'').replace(/\D/g,'').includes(q.replace(/\D/g,'') || '§'));
+  const ord = {nome:(a,b) => a.m.nome.localeCompare(b.m.nome,'it'), spesa:(a,b) => b.st.speso - a.st.speso, debito:(a,b) => b.st.debito - a.st.debito,
+    recenti:(a,b) => String(b.st.ultima?.chiusura||'').localeCompare(String(a.st.ultima?.chiusura||''))};
+  dati.sort(ord[cliSort] || ord.nome);
+  if (!dati.length) return `<p class="muted" style="margin:0">${S.membri.size ? 'Nessun cliente corrisponde alla ricerca.' : 'Nessun cliente ancora: si aggiungono da soli quando qualcuno prenota dal link.'}</p>`;
+  return `<div class="list">${dati.map(({m, st}) => `<a class="li" href="#cliente-${m.id}" style="text-decoration:none">
+    <div class="main"><div class="t">${esc(m.nome)}</div><div class="d">${m.telefono ? esc(m.telefono) + ' · ' : ''}${st.n} prenotazion${st.n===1?'e':'i'}${st.ultima ? ' · ultima: ' + esc(st.ultima.titolo) : ''}</div>${m.note?`<div class="d">${esc(m.note)}</div>`:''}</div>
+    <div class="side"><b>${fmtE(st.speso)}</b>${st.debito > 0.005 ? `<span class="chip bad">deve ${fmtE(st.debito)}</span>` : st.n ? `<span class="chip ok">in regola</span>` : ''}</div></a>`).join('')}</div>`;
+}
+function viewClienti(){
+  const a = analisi();
+  const debito = a.debitori.reduce((s, c) => s + c.debito, 0);
+  const so = (k, l) => `<button type="button" class="${cliSort===k?'on':''}" data-act="cliSort" data-id="${k}">${l}</button>`;
+  return `<div class="stack">
+    <div class="row between"><div><h1>Clienti</h1><div class="small muted">Anagrafe: si aggiorna da sola quando qualcuno prenota dal link.</div></div>
+      <div class="row" style="gap:8px"><button class="btn" data-act="xlsClienti">${ICON.xls}Excel</button><button class="btn primary" data-act="newMem">${ICON.plus}Nuovo</button></div></div>
+    <div class="kpis">
+      <div class="kpi"><div class="eyebrow">Clienti</div><div class="v">${S.membri.size}</div><div class="s">${a.ricorrenti} hanno prenotato più volte</div></div>
+      <div class="kpi"><div class="eyebrow">Attivi</div><div class="v">${a.attivi}</div><div class="s">nelle ultime 3 ordinazioni</div></div>
+      <div class="kpi"><div class="eyebrow">Spesa media</div><div class="v">${fmtE(a.scontrino)}</div><div class="s">per prenotazione</div></div>
+      <div class="kpi"><div class="eyebrow">Crediti aperti</div><div class="v" style="color:${debito>0?'var(--warn)':'inherit'}">${fmtE(debito)}</div><div class="s">${a.debitori.length} client${a.debitori.length===1?'e':'i'} da incassare</div></div>
+    </div>
+    <label class="search">${ICON.search}<input id="cliQ" type="search" placeholder="Cerca per nome o telefono" value="${esc(cliQ)}" autocomplete="off"></label>
+    <div class="seg">${so('nome','A–Z')}${so('spesa','Più spesa')}${so('debito','Da pagare')}${so('recenti','Recenti')}</div>
+    <div class="panel" id="cliList">${righeClienti()}</div>
+  </div>`;
+}
+document.addEventListener('input', e => { if (e.target.id === 'cliQ') { cliQ = e.target.value; const l = $('#cliList'); if (l) l.innerHTML = righeClienti(); } });
+function viewCliente(id){
+  const m = S.membri.get(id);
+  if (!m) return `<div class="panel empty"><h2>Cliente non trovato</h2><a class="btn" href="#clienti">Torna ai clienti</a></div>`;
+  const st = clienteStats(id); const msg = msgResoconto(m); MSGS.res = msg;
+  const maxS = Math.max(...st.prodotti.map(x => x.spesa), 0.01);
+  const tel = String(m.telefono||'').replace(/[^\d+]/g, '');
+  return `<div class="stack" style="gap:16px">
+    <a href="#clienti" class="small muted row" style="gap:4px;text-decoration:none"><span style="width:16px;height:16px;display:inline-flex">${ICON.back}</span>Clienti</a>
+    <div class="stack" style="gap:6px"><div class="eyebrow">Scheda cliente</div><h1>${esc(m.nome)}</h1>
+      <div class="small muted">${m.telefono ? esc(m.telefono) : 'Telefono non indicato'}${m.note ? ' · ' + esc(m.note) : ''}${st.prima ? ` · cliente da «${esc(st.prima.titolo)}»` : ''}</div></div>
+    <div class="row" style="gap:8px">
+      ${tel ? `<a class="btn" href="tel:${esc(tel)}">${ICON.phone}Chiama</a><a class="btn" href="${esc(waLink('', m.telefono))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+      <button class="btn" data-act="xlsCliente" data-id="${m.id}">${ICON.xls}Excel</button>
+      <button class="btn" data-act="editMem" data-id="${m.id}">Modifica</button>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="eyebrow">Prenotazioni</div><div class="v">${st.n}</div><div class="s">${st.ultima ? 'ultima: ' + esc(st.ultima.titolo) : 'nessuna ancora'}</div></div>
+      <div class="kpi hero"><div class="eyebrow">Totale speso</div><div class="v">${fmtE(st.speso)}</div><div class="s">media ${fmtE(st.media)} a prenotazione</div></div>
+      <div class="kpi"><div class="eyebrow">Pagato</div><div class="v">${fmtE(st.pagato)}</div><div class="s">&nbsp;</div></div>
+      <div class="kpi"><div class="eyebrow">Da pagare</div><div class="v" style="color:${st.debito>0.005?'var(--warn)':'inherit'}">${fmtE(st.debito)}</div><div class="s">${st.debito>0.005?'da incassare':'in regola'}</div></div>
+    </div>
+    <section class="panel"><h2>Resoconto per ${esc(m.nome.split(' ')[0])}</h2><div class="small muted">Riepilogo personale da inviare al cliente: prenotazioni, totale e pagamenti.</div>
+      <div class="msg">${esc(msg)}</div>
+      <div class="row">${m.telefono ? `<a class="btn primary" href="${esc(waLink(msg, m.telefono))}" target="_blank" rel="noopener">${ICON.wa}Invia su WhatsApp</a>` : ''}<button class="btn ${m.telefono?'':'primary'}" data-act="copyMsg" data-id="res">${ICON.copy}Copia testo</button><button class="btn" data-act="xlsCliente" data-id="${m.id}">${ICON.xls}Scarica resoconto Excel</button></div></section>
+    <div class="grid2">
+      <section class="panel"><h2 style="margin-bottom:12px">Prodotti preferiti</h2>${st.prodotti.length ? `<div class="pbar">${st.prodotti.slice(0,6).map(x => `<div class="r"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(x.nome)}</b> <span class="muted small">${fmtQ(x.q)} ${esc(x.unita)} · ${x.volte} volt${x.volte===1?'a':'e'}</span></span><span>${fmtE(x.spesa)}</span><div class="track"><div class="fill" style="width:${Math.max(2, x.spesa/maxS*100)}%"></div></div></div>`).join('')}</div>` : '<p class="muted small" style="margin:0">Nessun acquisto ancora.</p>'}</section>
+      <section class="panel"><h2>Storico prenotazioni</h2>${st.n ? `<div class="list">${st.prens.map(({p, o}) => `<a class="li" href="#ord-${o.id}" style="text-decoration:none"><div class="main"><div class="t">${esc(o.titolo)}</div><div class="d">${esc(testoProdotti(p, o)) || 'Nessun prodotto'}</div><div class="row" style="gap:6px;margin-top:6px"><span class="chip ${p.pagato?'ok':'bad'}">${p.pagato?'Pagato':'Da pagare'}</span>${p.consegnato?'<span class="chip ok">Consegnato</span>':''}</div></div><div class="side"><b>${fmtE(prenTot(p,o).ricavo)}</b><span class="small muted">${fmtD(String(o.chiusura||'').slice(0,10))}</span></div></a>`).join('')}</div>` : '<p class="muted small" style="margin:0">Nessuna prenotazione.</p>'}</section>
+    </div>
+  </div>`;
+}
+function pannelliAnalisi(){
+  const a = analisi();
+  if (!a.nPren) return '';
+  const maxT = Math.max(...a.top.map(c => c.speso), 0.01), totCat = a.agr + a.fda || 1;
+  const link = c => c.id && S.membri.has(c.id) ? `href="#cliente-${c.id}"` : '';
+  return `<div class="grid2">
+    <section class="panel"><div class="row between" style="margin-bottom:12px"><h2>Clienti migliori</h2><a class="small muted" href="#clienti">Anagrafe</a></div>
+      <div class="pbar">${a.top.map(c => `<a class="r" ${link(c)} style="text-decoration:none;color:inherit"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(c.nome)}</b> <span class="muted small">${c.ordini.size} ordinazion${c.ordini.size===1?'e':'i'}</span></span><span>${fmtE(c.speso)}</span><div class="track"><div class="fill" style="width:${Math.max(2, c.speso/maxT*100)}%"></div></div></a>`).join('')}</div></section>
+    <section class="panel"><h2 style="margin-bottom:10px">Analisi</h2>
+      <div class="stats">
+        <div><span>Clienti attivi (ultime 3 ordinazioni)</span><b>${a.attivi}</b></div>
+        <div><span>Nuovi nell'ultima ordinazione</span><b>${a.nuovi}</b></div>
+        <div><span>Clienti ricorrenti</span><b>${a.cl.length ? Math.round(a.ricorrenti/a.cl.length*100) : 0}%</b></div>
+        <div><span>Spesa media per prenotazione</span><b>${fmtE(a.scontrino)}</b></div>
+        <div><span>Prenotazioni medie per ordinazione</span><b>${a.perOrdine.toLocaleString('it-IT', {maximumFractionDigits:1})}</b></div>
+      </div>
+      <div class="small muted" style="margin:12px 0 6px">Ricavi per categoria</div>
+      <div class="catbar"><span style="width:${a.agr/totCat*100}%;background:var(--peel)"></span><span style="width:${a.fda/totCat*100}%;background:var(--leaf)"></span></div>
+      <div class="legend" style="margin-top:6px"><span><i style="background:var(--peel)"></i>Agrumi ${fmtE(a.agr)} (${Math.round(a.agr/totCat*100)}%)</span><span><i style="background:var(--leaf)"></i>Forme dell'Anima ${fmtE(a.fda)} (${Math.round(a.fda/totCat*100)}%)</span></div>
+    </section>
+  </div>
+  ${a.debitori.length ? `<section class="panel"><div class="row between"><h2>Da incassare</h2><span class="small muted">${a.debitori.length} client${a.debitori.length===1?'e':'i'}</span></div>
+    <div class="list">${a.debitori.slice(0, 8).map(c => `<a class="li" ${link(c)} style="text-decoration:none"><div class="main"><div class="t">${esc(c.nome)}</div></div><div class="side"><b style="color:var(--warn)">${fmtE(c.debito)}</b></div></a>`).join('')}</div></section>` : ''}`;
+}
+
+/* ---------- gesture su smartphone ----------
+   - scorri a sinistra/destra: sezione successiva/precedente (nella scheda di un'ordinazione: le sue schede);
+   - nell'app installata, scorri dal bordo sinistro: torna indietro;
+   - su una prenotazione: verso destra = pagato, verso sinistra = consegnato;
+   - in una finestra: trascina in giù la parte alta per chiuderla. */
+const ORDTABS = ['prenotazioni', 'riepilogo', 'messaggi'];
+const NAVK = NAV.map(n => n[0]);
+const NO_SWIPE = 'input,textarea,select,.tscroll,.seg,.msg,.kpis,iframe,svg';
+let animDir = 0, gs = null;
+const vibra = () => { try { navigator.vibrate?.(12); } catch {} };
+function anima(dir){
+  const a = $('#app'); a.classList.remove('va-avanti', 'va-indietro'); void a.offsetWidth;
+  a.classList.add(dir > 0 ? 'va-avanti' : 'va-indietro');
+}
+function vai(hash, dir){ animDir = dir; location.hash = hash; }
+function indietro(){
+  const r = route();
+  if (r.startsWith('ord-')) vai('ordinazioni', -1);
+  else if (r.startsWith('cliente-')) vai('clienti', -1);
+  else if (r !== 'dashboard') vai('dashboard', -1);
+}
+function scorri(dir){
+  const r = route();
+  if (r.startsWith('ord-')) {
+    const j = ORDTABS.indexOf(ordTab) + dir;
+    if (j < 0) { indietro(); return; }
+    if (j < ORDTABS.length) { ordTab = ORDTABS[j]; render(); anima(dir); vibra(); }
+    return;
+  }
+  if (r.startsWith('cliente-')) { if (dir < 0) indietro(); return; }
+  const j = NAVK.indexOf(sezione(r)) + dir;
+  if (j >= 0 && j < NAVK.length) { vibra(); vai(NAVK[j], dir); }
+}
+function rilasciaRiga(row){
+  if (!row) return;
+  const sw = row.querySelector('.swin');
+  if (sw) { sw.style.transition = 'transform .2s ease'; sw.style.transform = ''; }
+  row.classList.remove('drag-l', 'drag-r');
+}
+document.addEventListener('touchstart', e => {
+  if (phase !== 'app' || dlg.open || e.touches.length !== 1) { gs = null; return; }
+  const t = e.touches[0];
+  gs = {x:t.clientX, y:t.clientY, t:Date.now(), dir:null, row:e.target.closest('.swrow'),
+    bordo:t.clientX < 24 && standalone(), salta:!!e.target.closest(NO_SWIPE) && !e.target.closest('.swrow')};
+}, {passive:true});
+document.addEventListener('touchmove', e => {
+  if (!gs || gs.salta) return;
+  const t = e.touches[0], dx = t.clientX - gs.x, dy = t.clientY - gs.y;
+  if (!gs.dir) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    gs.dir = Math.abs(dx) > Math.abs(dy) * 1.3 ? 'h' : 'v';
+  }
+  if (gs.dir !== 'h') return;
+  if (gs.row) {
+    const v = Math.max(-150, Math.min(150, dx)), sw = gs.row.querySelector('.swin');
+    sw.style.transition = 'none'; sw.style.transform = `translateX(${v}px)`;
+    gs.row.classList.toggle('drag-l', v > 0); gs.row.classList.toggle('drag-r', v < 0);
+    if (!gs.vibrato && Math.abs(v) > 80) { gs.vibrato = true; vibra(); }
+  }
+}, {passive:true});
+document.addEventListener('touchend', e => {
+  if (!gs) return;
+  const s = gs; gs = null;
+  if (s.salta || s.dir !== 'h') { rilasciaRiga(s.row); return; }
+  const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Date.now() - s.t;
+  if (s.row) {
+    const id = s.row.dataset.sw; rilasciaRiga(s.row);
+    if (dx > 80) ACT.togPaid(id); else if (dx < -80) ACT.togDel(id);
+    return;
+  }
+  if (Math.abs(dy) > 90 || !((Math.abs(dx) > 60 && dt < 700) || Math.abs(dx) > 130)) return;
+  if (s.bordo && dx > 0) { vibra(); indietro(); return; }
+  scorri(dx < 0 ? 1 : -1);
+}, {passive:true});
+document.addEventListener('touchcancel', () => { if (gs) { rilasciaRiga(gs.row); gs = null; } }, {passive:true});
+// Finestre: trascina in giù la parte alta per chiudere.
+let gd = null;
+dlg.addEventListener('touchstart', e => {
+  if (!e.target.closest('.dh') || e.target.closest('button')) return;
+  gd = {y:e.touches[0].clientY, dy:0};
+}, {passive:true});
+dlg.addEventListener('touchmove', e => {
+  if (!gd) return;
+  gd.dy = Math.max(0, e.touches[0].clientY - gd.y);
+  dlg.style.transition = 'none'; dlg.style.transform = `translateY(${gd.dy}px)`;
+}, {passive:true});
+dlg.addEventListener('touchend', () => {
+  if (!gd) return;
+  const chiudi = gd.dy > 90; gd = null;
+  dlg.style.transition = 'transform .18s ease'; dlg.style.transform = '';
+  if (chiudi) { vibra(); dlg.close(); }
+});
+dlg.addEventListener('close', () => { dlg.style.transform = ''; });
+function suggerisciGesture(){
+  if (!matchMedia('(pointer: coarse)').matches) return;
+  try { if (localStorage.getItem('gesture_spiegate')) return; localStorage.setItem('gesture_spiegate', '1'); } catch { return; }
+  setTimeout(() => toast('Suggerimento: scorri a destra o a sinistra per cambiare sezione'), 1200);
+}
+
 /* ---------- azioni ---------- */
 function markRead(list){ for (const p of list) if (p.letta === false) put('prenotazioni', p.id, {letta:true}); }
 const ACT = {
@@ -935,6 +1307,13 @@ const ACT = {
   editOrd: id => formOrdine(S.ordinazioni.get(id)),
   dupOrd: id => formOrdine(S.ordinazioni.get(id), true),
   copyLink: id => copyText(linkOrdina(id)),
+  previewOrd: id => anteprima(id),
+  publishOrd: id => pubblica(id),
+  xlsOrd: id => { const o = S.ordinazioni.get(id); scarica(() => fogliOrdine(o), nomeFile(o.titolo)); },
+  xlsAll: () => scarica(fogliTutto, 'Ordini_Agrumi_' + new Date().toISOString().slice(0, 10)),
+  xlsClienti: () => scarica(fogliClienti, 'Clienti_' + new Date().toISOString().slice(0, 10)),
+  xlsCliente: id => { const m = S.membri.get(id); scarica(() => fogliCliente(m), 'Resoconto_' + nomeFile(m.nome)); },
+  cliSort: k => { cliSort = k; render(); },
   closeOrd: id => { put('ordinazioni', id, {stato:'chiusa'}); toast('Prenotazioni chiuse: il link non accetta più ordini'); },
   deliverOrd: id => { put('ordinazioni', id, {stato:'consegnata'}); toast('Ordinazione segnata come consegnata'); },
   reopenOrd: id => { const o = S.ordinazioni.get(id);
@@ -959,7 +1338,7 @@ const ACT = {
   delProd: id => { const p = S.prodotti.get(id); confirmDo('Eliminare il prodotto?', `"${esc(p.nome)}" verrà tolto dal catalogo. Le ordinazioni passate mantengono i loro dati.`, 'Elimina', () => { del('prodotti', id); toast('Prodotto eliminato'); }); },
   newMem: () => formMem(null),
   editMem: id => formMem(S.membri.get(id)),
-  delMem: id => { const m = S.membri.get(id); confirmDo('Eliminare il membro?', `${esc(m.nome)} verrà tolto dall'elenco. Le sue prenotazioni restano con il suo nome.`, 'Elimina', () => { del('membri', id); toast('Membro eliminato'); }); },
+  delMem: id => { const m = S.membri.get(id); confirmDo('Eliminare il cliente?', `${esc(m.nome)} verrà tolto dall'anagrafe. Le sue prenotazioni restano con il suo nome.`, 'Elimina', () => { del('membri', id); if (route() === 'cliente-' + id) location.hash = 'clienti'; toast('Cliente eliminato'); }); },
 };
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
@@ -968,7 +1347,7 @@ document.addEventListener('click', e => {
   if (dlg.contains(b) && dlg.open) { dlg.close(); setTimeout(() => fn(b.dataset.id), 30); return; }
   fn(b.dataset.id);
 });
-window.addEventListener('hashchange', () => { window.scrollTo(0,0); render(); });
+window.addEventListener('hashchange', () => { window.scrollTo(0,0); render(); if (animDir) { anima(animDir); animDir = 0; } });
 setInterval(() => { if (!dlg.open && phase === 'app') render(); }, 60000);
 render();
 boot();
