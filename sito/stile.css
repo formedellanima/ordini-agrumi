@@ -251,3 +251,13 @@ img{max-width:100%}
 .recap{width:100%;text-align:left}
 
 .btn:disabled{opacity:.45;cursor:default;filter:none}
+
+/* accesso con Apple / Google */
+.oppure{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem}
+.oppure::before,.oppure::after{content:"";flex:1;height:1px;background:var(--line)}
+.btn.accesso{gap:10px}
+.btn.accesso svg{width:18px;height:18px}
+.btn.apple{background:#000;border-color:#000;color:#fff}
+.btn.apple:hover{background:#000;filter:brightness(1.25)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.apple{background:#fff;border-color:#fff;color:#000}}
+:root[data-theme="dark"] .btn.apple{background:#fff;border-color:#fff;color:#000}

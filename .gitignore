@@ -13,3 +13,6 @@ ordini-agrumi.html
 .DS_Store
 firebase-debug.log
 *.log
+
+# UID dei gestori (usati da pubblica-regole.sh): restano su questo Mac.
+.gestori
