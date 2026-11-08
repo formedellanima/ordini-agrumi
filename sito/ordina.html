@@ -212,9 +212,12 @@ async function boot(){
     F = F_; db = F.getFirestore(A.initializeApp(CFG));
     const norm = s => { const d = s.data(); return {...d, id:s.id, chiusura:d.chiusura.toDate().toISOString(), aperta:d.aperta === true && d.chiusura.toMillis() > Date.now()}; };
     if (id) { const s = await F.getDoc(F.doc(db, 'pubbliche', id)); if (s.exists()) data = norm(s); }
-    else {
+    // Senza link preciso, o con un link tagliato da WhatsApp/copia-incolla: mostra l'ordinazione aperta
+    // (preferendo quella il cui codice inizia come il pezzo di link ricevuto).
+    if (!data) {
       const q = await F.getDocs(F.query(F.collection(db, 'pubbliche'), F.where('aperta', '==', true)));
-      data = q.docs.map(norm).filter(o => o.aperta).sort((a,b) => a.chiusura.localeCompare(b.chiusura))[0] || null;
+      const aperte = q.docs.map(norm).filter(o => o.aperta).sort((a,b) => a.chiusura.localeCompare(b.chiusura));
+      data = (id && id.length >= 6 && aperte.find(o => o.id.startsWith(id))) || aperte[0] || null;
     }
   } catch (e) { error = e; }
   if (error) { app.innerHTML = '<div class="panel empty"><h2>Prodotti non raggiungibili</h2><p>Controlla la connessione e ricarica la pagina.</p><button class="btn primary" onclick="location.reload()">Ricarica</button></div>'; return; }
