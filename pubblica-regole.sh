@@ -29,7 +29,7 @@ done
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 sed "s/'INCOLLA-QUI-IL-TUO-UID'/$LISTA/" firestore.rules > "$TMP/firestore.rules"
-grep -q "INCOLLA-QUI" "$TMP/firestore.rules" && { echo "Segnaposto non trovato in firestore.rules" >&2; exit 1; }
+grep -q "uid in \[$LISTA\]" "$TMP/firestore.rules" || { echo "Segnaposto 'INCOLLA-QUI-IL-TUO-UID' non trovato in firestore.rules" >&2; exit 1; }
 printf '{"firestore":{"rules":"firestore.rules"}}\n' > "$TMP/firebase.json"
 
 echo "Pubblico le regole su $PROGETTO con $(echo "$LISTA" | tr ',' '\n' | wc -l | tr -d ' ') gestore/i."
