@@ -24,6 +24,7 @@ Servono circa 20 minuti, una volta sola. Firebase e GitHub sono gratuiti e non c
 | `FIREBASE_PROJECT_ID` | `projectId` | sì |
 | `FIREBASE_APP_ID` | `appId` | sì |
 | `FIREBASE_AUTH_DOMAIN` | `authDomain` | no: se manca vale `PROGETTO.firebaseapp.com` |
+| `ACCESSO_GESTORE` | accessi esterni del gestore, separati da virgola: `apple`, `google` (vedi "Accesso con Apple") | no: senza, solo email e password |
 
 > ⚠️ Nel repository vanno **solo**: la cartella `sito`, il file `firestore.rules`, questa guida e il file di pubblicazione del punto 5. Non caricare `LEGGIMI.md` (contiene una tua password) né un `sito/config.js` compilato a mano: il repository è pubblico.
 
@@ -83,20 +84,36 @@ In Firebase vai in **Authentication → Settings → Domini autorizzati → Aggi
 
 ## 7. Proteggi il database (regole)
 
-1. Apri l'indirizzo del sito in **Safari** sull'iPhone e accedi con email e password.
-2. Compare **Account non abilitato** con un codice: premi **Copia codice**. È l'identificativo del tuo account.
-3. In Firebase: **Firestore Database → Regole**. Cancella tutto e incolla il contenuto del file `firestore.rules`, che si trova nella cartella principale, non in `sito`.
-4. Sostituisci `INCOLLA-QUI-IL-TUO-UID` con il codice copiato. Restano le virgolette.
-5. Premi **Pubblica** e ricarica il sito: entri nell'app.
+1. Apri il sito e accedi, con email e password oppure con Apple.
+2. Compare **Account non abilitato** con un codice: premi **Copia codice**. È l'identificativo (UID) del tuo account.
+3. Metti l'UID nelle regole e pubblicale, in uno dei due modi:
+   - **Con lo script**: scrivi l'UID in un file `.gestori` nella cartella principale, uno per riga. Il file resta sul tuo Mac ed è escluso da git. Poi lancia `./pubblica-regole.sh ID-PROGETTO`.
+   - **A mano**: in Firebase apri **Firestore Database → Regole** e incolla il contenuto di `firestore.rules`. Sostituisci `INCOLLA-QUI-IL-TUO-UID` con l'UID, lasciando le virgolette, e premi **Pubblica**.
+4. Ricarica il sito: entri nell'app.
+
+Ogni modo di accesso ha un suo UID: se entri sia con email sia con Apple, metti nell'elenco entrambi gli UID, separati da virgola nelle regole oppure su righe diverse in `.gestori`. Lo stesso vale per un secondo gestore.
 
 Con queste regole:
 - solo tu leggi e modifichi prodotti, prezzi FdA, membri e prenotazioni;
 - i clienti vedono solo le ordinazioni senza i prezzi di Forme dell'Anima;
 - i clienti possono solo inviare una prenotazione nuova, e solo finché l'ordinazione è aperta.
 
-## 8. App sulla schermata Home e notifiche
+## 8. Installa l'app e attiva le notifiche
 
-1. In Safari tocca **Condividi → Aggiungi alla schermata Home**. L'app si apre a schermo intero con la sua icona.
+L'app del gestore si installa come una vera app, con la sua icona, e si apre in una finestra a parte. Le istruzioni per il dispositivo che stai usando sono anche nella schermata di accesso (*Installa come app…*) e in **Impostazioni → Installa l'app**.
+
+| Dispositivo | Come si installa |
+|---|---|
+| **iPhone / iPad** | In **Safari**: **Condividi → Aggiungi alla schermata Home → Aggiungi** |
+| **Android** | In Chrome compare **Installa l'app**, oppure menu ⋮ → **Installa app** |
+| **Computer Windows / Mac** con Chrome o Edge | Icona **Installa** nella barra degli indirizzi, oppure il pulsante *Installa l'app* nelle Impostazioni |
+| **Mac con Safari** | Menu **File → Aggiungi al Dock** |
+
+L'app installata ha un accesso separato da quello del browser: la prima volta accedi di nuovo. Con rete scarsa si apre lo stesso, mentre i dati arrivano sempre in tempo reale da Firebase.
+
+Per le notifiche:
+
+1. Installa l'app sull'iPhone come indicato sopra.
 2. Installa **ntfy** dall'App Store (gratis).
 3. Nell'app degli ordini tocca l'**ingranaggio**. In *Notifiche delle nuove prenotazioni → Notifica push sull'iPhone* premi **Genera → Copia → Salva**.
 4. In ntfy tocca **+**, incolla il nome, lascia il server predefinito e conferma. Consenti le notifiche.
@@ -125,6 +142,30 @@ Se un cliente risponde in chat invece di usare il link: **+ Prenotazione → Ha 
 1. Su GitHub apri la cartella `sito` del repository → **Add file → Upload files**.
 2. Trascina i file modificati → **Commit changes**.
 3. La pubblicazione parte da sola.
+
+## Accesso con Apple
+
+Il pulsante **Accedi con Apple** compare quando la variabile GitHub `ACCESSO_GESTORE` contiene `apple`. Perché funzioni, Apple chiede una configurazione che si può fare solo con un account dell'**Apple Developer Program** (99 $ l'anno):
+
+1. Su **developer.apple.com → Certificates, IDs & Profiles**:
+   - crea un **Services ID** (per esempio `it.formedellanima.ordini.web`) e attiva *Sign in with Apple*;
+   - come dominio indica `PROGETTO.firebaseapp.com` e come Return URL `https://PROGETTO.firebaseapp.com/__/auth/handler`;
+   - in **Keys** crea una chiave con *Sign in with Apple* e scarica il file `.p8`.
+2. In Firebase vai in **Authentication → Metodi di accesso → Apple → Attiva** e inserisci:
+   - il Services ID;
+   - il Team ID di Apple;
+   - il Key ID;
+   - il contenuto del file `.p8`.
+3. Accedi con Apple e aggiungi il nuovo UID alle regole (punto 7).
+
+Finché la configurazione non è fatta, il pulsante mostra "L'accesso con Apple non è ancora attivo in Firebase".
+
+**Limiti noti:**
+- Nel **browser** (Safari, Chrome, sul telefono o sul computer) l'accesso con Apple funziona con una piccola finestra.
+- Nell'**app installata su iPhone** quella finestra non è disponibile e si passa per un reindirizzamento. Safari può bloccarlo, perché il sito (`github.io`) e il servizio di accesso (`firebaseapp.com`) hanno indirizzi diversi. In quel caso l'app lo spiega: accedi con email e password. L'accesso resta memorizzato, quindi si fa di rado.
+- Se ospitassi il sito su **Firebase Hosting** (gratuito) invece che su GitHub Pages, i due indirizzi coinciderebbero e il problema sparirebbe.
+
+Con la stessa variabile si può attivare anche `google` (Accedi con Google). È gratuito e in Firebase basta attivarlo in *Metodi di accesso*.
 
 ## Notifiche al gestore: come aggiungere altri canali
 
