@@ -386,6 +386,24 @@ let installEvt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (phase === 'login') render(); });
 window.addEventListener('appinstalled', () => { installEvt = null; toast('App installata'); });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+/* ---------- aggiornamento automatico ----------
+   L'app è una pagina unica che resta aperta per giorni: quando esce una nuova versione
+   (versione.txt cambia a ogni pubblicazione) si ricarica da sola, aspettando che non ci siano finestre aperte. */
+const VERSIONE = 'sviluppo';
+let ricaricaInAttesa = false;
+async function controllaVersione(){
+  if (VERSIONE === 'sviluppo' || ricaricaInAttesa) return;
+  try {
+    const v = (await (await fetch('versione.txt?t=' + Date.now(), {cache:'no-store'})).text()).trim();
+    if (!/^[0-9a-f]{7,40}$/.test(v) || v === VERSIONE) return;
+    ricaricaInAttesa = true;
+    if (dlg.open) { toast('È disponibile una nuova versione: si aggiornerà alla chiusura della finestra'); dlg.addEventListener('close', () => location.reload(), {once:true}); }
+    else location.reload();
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') controllaVersione(); });
+setInterval(controllaVersione, 5 * 60e3);
+window.addEventListener('load', () => setTimeout(controllaVersione, 3000));
 function comeInstallare(){
   const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
   const safariMac = /Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|Firefox/.test(ua) && !ios;

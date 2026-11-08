@@ -56,6 +56,14 @@ jobs:
             | { printf 'window.APP_CONFIG = '; cat; printf ';\n'; } > sito/config.js
           echo "config.js creato per il progetto $FIREBASE_PROJECT_ID"
 
+      - name: Segna la versione (l'app aperta si aggiorna da sola)
+        run: |
+          V="${GITHUB_SHA::12}"
+          echo "$V" > sito/versione.txt
+          sed -i "s/const VERSIONE = 'sviluppo';/const VERSIONE = '$V';/" sito/index.html
+          sed -i "s/ordini-agrumi-v1/ordini-agrumi-$V/" sito/sw.js
+          grep -q "const VERSIONE = '$V';" sito/index.html || { echo "::error::Versione non inserita in index.html"; exit 1; }
+
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

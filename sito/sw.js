@@ -22,7 +22,8 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
-  e.respondWith(fetch(req).then(res => {
+  // no-cache: chiede sempre al server se il file è cambiato (niente copie vecchie della cache del browser).
+  e.respondWith(fetch(url.href, {cache:'no-cache', credentials:'same-origin'}).then(res => {
     if (res.ok) { const copia = res.clone(); caches.open(CACHE).then(c => c.put(req, copia)); }
     return res;
   }).catch(() => caches.match(req, {ignoreSearch:true}).then(r => r || caches.match(url.pathname.endsWith('/') ? 'index.html' : req))));
