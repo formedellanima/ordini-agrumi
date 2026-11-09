@@ -299,3 +299,7 @@ img{max-width:100%}
 dialog .dh{touch-action:none}
 @media (max-width:640px){ dialog .dh::before{content:"";position:absolute;left:50%;top:6px;width:38px;height:4px;margin-left:-19px;border-radius:2px;background:var(--line)} dialog .dh{position:relative;padding-top:20px} }
 @media (prefers-reduced-motion: reduce){ #app.va-avanti,#app.va-indietro{animation:none} }
+/* Autoconsumo e spese di spedizione */
+.chip.auto{background:var(--leaf-soft);color:var(--leaf)}
+.li.auto{background:linear-gradient(90deg,var(--leaf-soft),transparent 75%);margin:0 -16px;padding-left:16px;padding-right:16px}
+tfoot tr.sub td{font-weight:500;color:var(--muted)}

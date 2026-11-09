@@ -42,9 +42,9 @@ const CFG = window.APP_CONFIG || {};
 const COLS = ['prodotti','ordinazioni','membri','prenotazioni'];
 const COLDEF = {
   prodotti:['id','nome','categoria','unita','pp','pf'],
-  ordinazioni:['id','titolo','chiusura','consegna','note','stato','prodotti'],
+  ordinazioni:['id','titolo','chiusura','consegna','note','stato','prodotti','spedizione'],
   membri:['id','nome','telefono','note'],
-  prenotazioni:['id','ord_id','membro_id','nome','telefono','righe','nota','pagato','consegnato','origine','letta','created_at'],
+  prenotazioni:['id','ord_id','membro_id','nome','telefono','righe','nota','pagato','consegnato','origine','letta','created_at','autoconsumo'],
 };
 const S = {prodotti:new Map(), ordinazioni:new Map(), membri:new Map(), prenotazioni:new Map()};
 const SET = {};
@@ -81,6 +81,8 @@ const linkOrdina = id => { const u = new URL('ordina.html', location.href); u.ha
 const linkStato = id => { const u = new URL('stato.html', location.href); u.hash = ''; u.search = '?p=' + encodeURIComponent(id); return u.href; };
 const appUrl = () => { const u = new URL(location.href); u.hash = ''; u.search = ''; return u.href; };
 const ICON = {
+  home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>',
+  truck:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
   dash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>',
   ord:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16l-1.5 12a2 2 0 0 1-2 1.8h-9a2 2 0 0 1-2-1.8z"/><path d="M8 7a4 4 0 0 1 8 0"/></svg>',
   prod:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 5c1-2 4-3 6-2-1 2-4 3-6 2z" stroke-linejoin="round"/></svg>',
@@ -103,7 +105,7 @@ const dref = (c, id) => fs.doc(db, c, id);
 function fix(c, r){
   if (r.created_at && typeof r.created_at.toDate === 'function') r = {...r, created_at:r.created_at.toDate().toISOString()};
   if (c === 'prodotti') return {...r, pp:num(r.pp), pf:num(r.pf)};
-  if (c === 'ordinazioni') return {...r, consegna:r.consegna||'', note:r.note||'', prodotti:(r.prodotti||[]).map(p => ({...p, pp:num(p.pp), pf:num(p.pf)}))};
+  if (c === 'ordinazioni') return {...r, consegna:r.consegna||'', note:r.note||'', spedizione:num(r.spedizione), prodotti:(r.prodotti||[]).map(p => ({...p, pp:num(p.pp), pf:num(p.pf)}))};
   return r;
 }
 function pick(c, row){
@@ -235,30 +237,40 @@ function ordState(o){
   if (o.chiusura && new Date(o.chiusura) < new Date()) return 'chiusa';
   return 'aperta';
 }
-const prenOf = oid => [...S.prenotazioni.values()].filter(p => p.ord_id === oid).sort((a,b) => (a.letta === b.letta ? 0 : a.letta ? 1 : -1) || nomeDi(a).localeCompare(nomeDi(b),'it'));
-const nomeDi = p => S.membri.get(p.membro_id)?.nome || p.nome || 'Senza nome';
+const prenOf = oid => [...S.prenotazioni.values()].filter(p => p.ord_id === oid).sort((a,b) => (isAuto(b) - isAuto(a)) || (a.letta === b.letta ? 0 : a.letta ? 1 : -1) || nomeDi(a).localeCompare(nomeDi(b),'it'));
+// Autoconsumo: agrumi presi dal gestore per uso interno. Entrano nell'ordine al fornitore
+// ma si contano a prezzo d'acquisto: nessun ricavo, il costo riduce il guadagno.
+const AUTO_NOME = "Autoconsumo Forme dell'Anima";
+const isAuto = p => p?.autoconsumo === true;
+const nomeDi = p => isAuto(p) ? AUTO_NOME : S.membri.get(p.membro_id)?.nome || p.nome || 'Senza nome';
 const nonLette = oid => [...S.prenotazioni.values()].filter(p => p.letta === false && (!oid || p.ord_id === oid));
 function prenTot(p, o){
   let r = 0, c = 0;
   for (const it of o.prodotti||[]) { const q = num(p.righe?.[it.pid]); r += q*it.pp; c += q*it.pf; }
+  if (isAuto(p)) return {ricavo:0, costo:c, guadagno:-c};
   return {ricavo:r, costo:c, guadagno:r-c};
 }
 function ordStats(o){
-  const prens = prenOf(o.id);
+  const prens = prenOf(o.id), clienti = prens.filter(p => !isAuto(p)), auto = prens.filter(isAuto);
+  const somma = (lista, pid) => lista.reduce((s,p) => s + num(p.righe?.[pid]), 0);
+  // q = totale da ordinare; qv = venduto ai clienti; qa = autoconsumo (solo costo).
   const rows = (o.prodotti||[]).map(it => {
-    const q = prens.reduce((s,p) => s + num(p.righe?.[it.pid]), 0);
-    return {...it, q, ricavo:q*it.pp, costo:q*it.pf, guadagno:q*(it.pp-it.pf)};
+    const qv = somma(clienti, it.pid), qa = somma(auto, it.pid), q = qv + qa;
+    return {...it, q, qv, qa, ricavo:qv*it.pp, costo:q*it.pf, costoAuto:qa*it.pf, guadagno:qv*it.pp - q*it.pf};
   });
-  const t = rows.reduce((a,r) => ({ricavo:a.ricavo+r.ricavo, costo:a.costo+r.costo, guadagno:a.guadagno+r.guadagno}), {ricavo:0,costo:0,guadagno:0});
+  const t = rows.reduce((a,r) => ({ricavo:a.ricavo+r.ricavo, costo:a.costo+r.costo, autoconsumo:a.autoconsumo+r.costoAuto}), {ricavo:0,costo:0,autoconsumo:0});
+  const spedizione = num(o.spedizione);
   let incassato = 0, daIncassare = 0;
-  for (const p of prens) { const v = prenTot(p,o).ricavo; if (p.pagato) incassato += v; else daIncassare += v; }
-  return {...t, rows, prens, n:prens.length, incassato, daIncassare};
+  for (const p of clienti) { const v = prenTot(p,o).ricavo; if (p.pagato) incassato += v; else daIncassare += v; }
+  // Guadagno netto: ricavi meno costo di tutti i prodotti (autoconsumo compreso) e spese di spedizione.
+  return {...t, spedizione, spese:t.costo + spedizione, guadagno:t.ricavo - t.costo - spedizione,
+    rows, prens, auto:auto[0] || null, n:clienti.length, incassato, daIncassare};
 }
 function prodStats(){
   const m = new Map();
   for (const o of ordini()) for (const r of ordStats(o).rows) {
-    const cur = m.get(r.pid) || {pid:r.pid, nome:r.nome, unita:r.unita, categoria:r.categoria, q:0, ricavo:0, costo:0, guadagno:0, ordini:0};
-    cur.q += r.q; cur.ricavo += r.ricavo; cur.costo += r.costo; cur.guadagno += r.guadagno; if (r.q > 0) cur.ordini++;
+    const cur = m.get(r.pid) || {pid:r.pid, nome:r.nome, unita:r.unita, categoria:r.categoria, q:0, qv:0, qa:0, costoAuto:0, ricavo:0, costo:0, guadagno:0, ordini:0};
+    cur.q += r.q; cur.qv += r.qv; cur.qa += r.qa; cur.costoAuto += r.costoAuto; cur.ricavo += r.ricavo; cur.costo += r.costo; cur.guadagno += r.guadagno; if (r.q > 0) cur.ordini++;
     m.set(r.pid, cur);
   }
   return m;
@@ -310,7 +322,7 @@ function msgConsegne(o){
   for (const p of prenOf(o.id).sort((a,b) => nomeDi(a).localeCompare(nomeDi(b),'it'))) {
     const items = (o.prodotti||[]).filter(it => num(p.righe?.[it.pid])>0).map(it => `${fmtQ(num(p.righe[it.pid]))} ${it.unita} ${it.nome}`);
     if (!items.length) continue;
-    L.push(`${p.pagato?'✅':'⬜'} *${nomeDi(p)}* — ${fmtE(prenTot(p,o).ricavo)}${p.pagato?'':' (da pagare)'}`);
+    L.push(isAuto(p) ? `🏠 *${nomeDi(p)}*` : `${p.pagato?'✅':'⬜'} *${nomeDi(p)}* — ${fmtE(prenTot(p,o).ricavo)}${p.pagato?'':' (da pagare)'}`);
     L.push('   ' + items.join(', '));
   }
   return L.join('\n');
@@ -538,9 +550,9 @@ function bindLogin(){
 function viewDashboard(){
   const os = ordini();
   if (!os.length) return `<div class="stack"><div class="panel empty"><h2>Nessuna ordinazione ancora</h2><p>Inserisci i prodotti con prezzo al pubblico e prezzo di Forme dell'Anima, poi crea l'ordinazione della settimana: l'app prepara il messaggio con il link di prenotazione per il gruppo WhatsApp.</p><div class="row" style="justify-content:center"><a class="btn" href="#prodotti">Aggiungi prodotti</a><button class="btn primary" data-act="newOrd">${ICON.plus}Nuova ordinazione</button></div></div></div>`;
-  let R=0,C=0,G=0,DI=0,IN=0;
+  let R=0,C=0,G=0,DI=0,IN=0,SP=0,AU=0;
   const stats = new Map(os.map(o => [o.id, ordStats(o)]));
-  for (const s of stats.values()) { R+=s.ricavo; C+=s.costo; G+=s.guadagno; DI+=s.daIncassare; IN+=s.incassato; }
+  for (const s of stats.values()) { R+=s.ricavo; C+=s.costo; G+=s.guadagno; DI+=s.daIncassare; IN+=s.incassato; SP+=s.spedizione; AU+=s.autoconsumo; }
   const inCorso = os.filter(o => ordState(o) !== 'consegnata').sort((a,b) => String(a.chiusura).localeCompare(String(b.chiusura)));
   const ps = [...prodStats().values()].filter(p => p.q > 0).sort((a,b) => b.guadagno - a.guadagno).slice(0,6);
   const maxG = Math.max(...ps.map(p => p.guadagno), 0.01);
@@ -550,9 +562,9 @@ function viewDashboard(){
     ${nuove.length ? `<section class="panel" style="border-color:var(--peel)"><div class="row between"><h2>${nuove.length} nuov${nuove.length===1?'a prenotazione':'e prenotazioni'}</h2><button class="btn sm" data-act="readAll">Segna tutte come lette</button></div>
       <div class="list">${nuove.slice(0,6).map(p => { const o = S.ordinazioni.get(p.ord_id); if (!o) return ''; return `<a class="li" href="#ord-${o.id}" data-act="openPrenOrd" data-id="${p.id}" style="text-decoration:none"><div class="main"><div class="t">${esc(nomeDi(p))}</div><div class="d">${esc(o.titolo)} · ${fmtAgo(p.created_at)}</div></div><div class="side"><b>${fmtE(prenTot(p,o).ricavo)}</b></div></a>`; }).join('')}</div></section>` : ''}
     <div class="kpis">
-      <div class="kpi hero"><div class="eyebrow">Guadagno</div><div class="v">${fmtE(G)}</div><div class="s">margine ${pct(G,R)} sui ricavi</div></div>
+      <div class="kpi hero"><div class="eyebrow">Guadagno</div><div class="v">${fmtE(G)}</div><div class="s">margine ${pct(G,R)} sui ricavi${SP||AU ? ` · al netto di ${[AU?`${fmtE(AU)} di autoconsumo`:'', SP?`${fmtE(SP)} di spedizioni`:''].filter(Boolean).join(' e ')}` : ''}</div></div>
       <div class="kpi"><div class="eyebrow">Ricavi</div><div class="v">${fmtE(R)}</div><div class="s">${os.length} ordinazion${os.length===1?'e':'i'}</div></div>
-      <div class="kpi"><div class="eyebrow">Costo Forme dell'Anima</div><div class="v">${fmtE(C)}</div><div class="s">da pagare al fornitore</div></div>
+      <div class="kpi"><div class="eyebrow">Costo Forme dell'Anima</div><div class="v">${fmtE(C)}</div><div class="s">${AU ? `di cui autoconsumo ${fmtE(AU)}` : 'da pagare al fornitore'}</div></div>
       <div class="kpi"><div class="eyebrow">Da incassare</div><div class="v" style="color:${DI>0?'var(--warn)':'inherit'}">${fmtE(DI)}</div><div class="s">incassati ${fmtE(IN)}</div></div>
     </div>
     <section class="stack" style="gap:10px">
@@ -560,7 +572,7 @@ function viewDashboard(){
       ${inCorso.length ? `<div class="cards">${inCorso.map(o => orderCard(o, stats.get(o.id))).join('')}</div>` : `<div class="panel muted small">Nessuna ordinazione in corso. Crea quella della prossima settimana.</div>`}
     </section>
     <div class="grid2">
-      <section class="panel chart"><div class="row between" style="margin-bottom:8px"><h2>Ricavi e guadagno per ordinazione</h2><div class="legend"><span><i style="background:var(--cost)"></i>Costo FdA</span><span><i style="background:var(--leaf)"></i>Guadagno</span></div></div>${barChart(os.slice(0,8).reverse(), stats)}</section>
+      <section class="panel chart"><div class="row between" style="margin-bottom:8px"><h2>Ricavi e guadagno per ordinazione</h2><div class="legend"><span><i style="background:var(--cost)"></i>Costi</span><span><i style="background:var(--leaf)"></i>Guadagno</span></div></div>${barChart(os.slice(0,8).reverse(), stats)}</section>
       <section class="panel"><h2 style="margin-bottom:12px">Prodotti che rendono di più</h2>${ps.length ? `<div class="pbar">${ps.map(p => `<div class="r"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(p.nome)}</b> <span class="muted small">${fmtQ(p.q)} ${esc(p.unita)}</span></span><span class="${signCls(p.guadagno)}">${fmtE(p.guadagno)}</span><div class="track"><div class="fill" style="width:${Math.max(2,p.guadagno/maxG*100)}%"></div></div></div>`).join('')}</div>` : '<p class="muted small">Appariranno qui quando arrivano le prime prenotazioni.</p>'}</section>
     </div>
     ${pannelliAnalisi()}
@@ -585,7 +597,7 @@ function barChart(os, stats){
   for (let i = 0; i <= 4; i++) { const v = max*i/4; g += `<line x1="${L}" x2="${W-Rr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${v>=1000?(v/1000).toLocaleString('it-IT')+'k':Math.round(v)}€</text>`; }
   os.forEach((o, i) => {
     const s = stats.get(o.id); const cx = L + iw*(i+.5)/os.length; const x = cx - bw/2;
-    const costo = Math.max(0, Math.min(s.costo, s.ricavo)); const gu = Math.max(0, s.ricavo - costo);
+    const costo = Math.max(0, Math.min(s.spese, s.ricavo)); const gu = Math.max(0, s.ricavo - costo);
     g += `<rect x="${x}" y="${y(costo)}" width="${bw}" height="${y(0)-y(costo)}" fill="var(--cost)" rx="2"/>`;
     g += `<rect x="${x}" y="${y(costo+gu)}" width="${bw}" height="${y(costo)-y(costo+gu)}" fill="var(--leaf)" rx="2"/>`;
     if (s.ricavo > 0) g += `<text x="${cx}" y="${y(s.ricavo)-5}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">${Math.round(s.guadagno)}€</text>`;
@@ -630,6 +642,8 @@ function viewOrdine(id){
       <div class="row" style="gap:8px"><button class="btn" data-act="previewOrd" data-id="${o.id}">${ICON.eye}Anteprima</button><button class="btn primary" data-act="publishOrd" data-id="${o.id}">Pubblica</button><button class="btn" data-act="editOrd" data-id="${o.id}">Modifica</button><button class="btn danger" data-act="delOrd" data-id="${o.id}">Elimina</button></div></section>` : ''}
     <div class="row" style="gap:8px" ${s==='bozza'?'hidden':''}>
       <button class="btn primary" data-act="newPren" data-id="${o.id}">${ICON.plus}Prenotazione</button>
+      <button class="btn" data-act="autoPren" data-id="${o.id}">${ICON.home}Autoconsumo</button>
+      <button class="btn" data-act="shipOrd" data-id="${o.id}">${ICON.truck}Spedizione</button>
       <button class="btn" data-act="copyLink" data-id="${o.id}">${ICON.link}Link clienti</button>
       <button class="btn" data-act="previewOrd" data-id="${o.id}">${ICON.eye}Anteprima</button>
       <button class="btn" data-act="xlsOrd" data-id="${o.id}">${ICON.xls}Excel</button>
@@ -642,8 +656,8 @@ function viewOrdine(id){
     </div>
     <div class="kpis">
       <div class="kpi"><div class="eyebrow">Ricavo</div><div class="v">${fmtE(st.ricavo)}</div><div class="s">${st.n} prenotazion${st.n===1?'e':'i'}</div></div>
-      <div class="kpi"><div class="eyebrow">Costo FdA</div><div class="v">${fmtE(st.costo)}</div><div class="s">da pagare a Forme dell'Anima</div></div>
-      <div class="kpi hero"><div class="eyebrow">Guadagno</div><div class="v">${fmtE(st.guadagno)}</div><div class="s">margine ${pct(st.guadagno, st.ricavo)}</div></div>
+      <div class="kpi"><div class="eyebrow">Costo FdA</div><div class="v">${fmtE(st.costo)}</div><div class="s">${st.autoconsumo ? `di cui autoconsumo ${fmtE(st.autoconsumo)}` : "da pagare a Forme dell'Anima"}</div></div>
+      <div class="kpi hero"><div class="eyebrow">Guadagno</div><div class="v">${fmtE(st.guadagno)}</div><div class="s">margine ${pct(st.guadagno, st.ricavo)}${st.spedizione ? ` · spedizione ${fmtE(st.spedizione)}` : ''}</div></div>
       <div class="kpi"><div class="eyebrow">Da incassare</div><div class="v" style="color:${st.daIncassare>0?'var(--warn)':'inherit'}">${fmtE(st.daIncassare)}</div><div class="s">incassati ${fmtE(st.incassato)}</div></div>
     </div>
     <div class="seg">${tabs.map(([k,l]) => `<button type="button" class="${ordTab===k?'on':''}" data-act="tab" data-id="${k}">${l}</button>`).join('')}</div>
@@ -651,12 +665,17 @@ function viewOrdine(id){
   </div>`;
 }
 function tabPrenotazioni(o, st){
-  if (!st.prens.length) return `<div class="panel empty"><h2>Ancora nessuna prenotazione</h2><p>Invia il messaggio con il link nel gruppo WhatsApp (scheda Messaggi). Le prenotazioni dei clienti compaiono qui da sole, e ricevi una notifica.</p><div class="row" style="justify-content:center"><button class="btn" data-act="tab" data-id="messaggi">Prepara il messaggio</button><button class="btn primary" data-act="newPren" data-id="${o.id}">${ICON.plus}Aggiungi a mano</button></div></div>`;
+  if (!st.prens.length) return `<div class="panel empty"><h2>Ancora nessuna prenotazione</h2><p>Invia il messaggio con il link nel gruppo WhatsApp (scheda Messaggi). Le prenotazioni dei clienti compaiono qui da sole, e ricevi una notifica.</p><div class="row" style="justify-content:center"><button class="btn" data-act="tab" data-id="messaggi">Prepara il messaggio</button><button class="btn primary" data-act="newPren" data-id="${o.id}">${ICON.plus}Aggiungi a mano</button><button class="btn" data-act="autoPren" data-id="${o.id}">${ICON.home}Autoconsumo</button></div></div>`;
   const nl = st.prens.filter(p => p.letta === false).length;
   return `<div class="panel">${nl ? `<div class="row between" style="margin-bottom:6px"><span class="small"><b>${nl}</b> nuov${nl===1?'a':'e'} dal link</span><button class="btn sm" data-act="readOrd" data-id="${o.id}">Segna come lette</button></div>` : ''}
   <div class="list">${st.prens.map(p => {
     const t = prenTot(p, o);
     const items = (o.prodotti||[]).filter(it => num(p.righe?.[it.pid])>0).map(it => `${fmtQ(num(p.righe[it.pid]))} ${esc(it.unita)} ${esc(it.nome)}`).join(' · ');
+    if (isAuto(p)) return `<div class="li auto"><div class="main"><div class="t">${esc(AUTO_NOME)} <span class="chip auto">Autoconsumo</span></div>
+        <div class="d">${items || 'Nessun prodotto'}</div>
+        <div class="d">A prezzo d'acquisto: entra nell'ordine al fornitore, non genera ricavo${p.nota ? ' · ' + esc(p.nota) : ''}</div></div>
+      <div class="side"><b class="neg">−${fmtE(t.costo)}</b><span class="small muted">costo</span>
+        <div class="row" style="gap:4px"><button class="btn sm" data-act="autoPren" data-id="${o.id}">Modifica</button><button class="btn sm ghost danger" data-act="delPren" data-id="${p.id}" aria-label="Elimina autoconsumo">✕</button></div></div></div>`;
     return `<div class="li swrow ${p.letta===false?'unread':''}" data-sw="${p.id}">
       <div class="swbg l">${p.pagato ? '↺ Da pagare' : '✓ Pagato'}</div><div class="swbg r">${p.consegnato ? 'Non consegnato ↺' : 'Consegnato ✓'}</div>
       <div class="swin"><div class="main"><div class="t">${esc(nomeDi(p))} ${p.letta===false?'<span class="chip new">Nuova</span>':''}</div>
@@ -681,9 +700,13 @@ function tabRiepilogo(o, st){
     <thead><tr><th>Prodotto</th><th class="n">Pubblico</th><th class="n">FdA</th><th class="n">Margine</th><th class="n">Q.tà</th><th class="n">Ricavo</th><th class="n">Costo</th><th class="n">Guadagno</th></tr></thead>
     <tbody>${st.rows.map(r => `<tr><td><b>${esc(r.nome)}</b><br><span class="cat ${r.categoria}">${CAT[r.categoria]||''}</span> <span class="small muted">/${esc(r.unita)}</span></td>
       <td class="n">${fmtE(r.pp)}</td><td class="n">${fmtE(r.pf)}</td><td class="n ${signCls(r.pp-r.pf)}">${fmtE(r.pp-r.pf)}<br><span class="small muted">${pct(r.pp-r.pf, r.pp)}</span></td>
-      <td class="n"><b>${fmtQ(r.q)}</b></td><td class="n">${fmtE(r.ricavo)}</td><td class="n">${fmtE(r.costo)}</td><td class="n ${signCls(r.guadagno)}">${fmtE(r.guadagno)}</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td colspan="5">Totale</td><td class="n">${fmtE(st.ricavo)}</td><td class="n">${fmtE(st.costo)}</td><td class="n ${signCls(st.guadagno)}">${fmtE(st.guadagno)}</td></tr></tfoot>
-  </table></div></div>`;
+      <td class="n"><b>${fmtQ(r.q)}</b>${r.qa ? `<br><span class="small muted">${fmtQ(r.qa)} autoc.</span>` : ''}</td><td class="n">${fmtE(r.ricavo)}</td><td class="n">${fmtE(r.costo)}</td><td class="n ${signCls(r.guadagno)}">${fmtE(r.guadagno)}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="5">Totale prodotti</td><td class="n">${fmtE(st.ricavo)}</td><td class="n">${fmtE(st.costo)}</td><td class="n ${signCls(st.ricavo - st.costo)}">${fmtE(st.ricavo - st.costo)}</td></tr>
+      ${st.autoconsumo ? `<tr class="sub"><td colspan="6">di cui autoconsumo, a prezzo d'acquisto</td><td class="n">${fmtE(st.autoconsumo)}</td><td></td></tr>` : ''}
+      <tr class="sub"><td colspan="6">Spese di spedizione</td><td class="n">${fmtE(st.spedizione)}</td><td class="n ${st.spedizione ? 'neg' : ''}">${st.spedizione ? '−' + fmtE(st.spedizione) : '—'}</td></tr>
+      <tr><td colspan="7">Guadagno netto</td><td class="n ${signCls(st.guadagno)}">${fmtE(st.guadagno)}</td></tr></tfoot>
+  </table></div>
+  <div class="row" style="gap:8px;margin-top:10px"><button class="btn sm" data-act="autoPren" data-id="${o.id}">${ICON.home}${st.auto ? 'Modifica autoconsumo' : 'Aggiungi autoconsumo'}</button><button class="btn sm" data-act="shipOrd" data-id="${o.id}">${ICON.truck}${st.spedizione ? 'Modifica spedizione' : 'Aggiungi spedizione'}</button></div></div>`;
 }
 let MSGS = {};
 function msgBlock(title, sub, text, key){
@@ -707,7 +730,7 @@ function viewProdotti(){
   const group = cat => { const items = ps.filter(p => p.categoria === cat); return `<section class="panel"><div class="row between" style="margin-bottom:4px"><h2>${CAT[cat]}</h2><span class="small muted">${items.length} prodott${items.length===1?'o':'i'}</span></div>
     ${items.length ? `<div class="list">${items.map(p => { const s = stats.get(p.id); const m = p.pp - p.pf; return `<div class="li">
       <div class="main"><div class="t">${esc(p.nome)}</div><div class="d">Pubblico <b style="color:var(--ink)">${fmtE(p.pp)}</b> · FdA ${fmtE(p.pf)} · per ${esc(p.unita)}</div>
-      ${s && s.q ? `<div class="d">Venduti ${fmtQ(s.q)} ${esc(p.unita)} in ${s.ordini} ordinazion${s.ordini===1?'e':'i'} · guadagno <span class="${signCls(s.guadagno)}">${fmtE(s.guadagno)}</span></div>` : ''}</div>
+      ${s && s.q ? `<div class="d">Venduti ${fmtQ(s.qv)} ${esc(p.unita)}${s.qa ? ` (+${fmtQ(s.qa)} in autoconsumo)` : ''} in ${s.ordini} ordinazion${s.ordini===1?'e':'i'} · guadagno <span class="${signCls(s.guadagno)}">${fmtE(s.guadagno)}</span></div>` : ''}</div>
       <div class="side"><span class="${signCls(m)}">+${fmtE(m)}</span><span class="small muted">${pct(m, p.pp)}</span><button class="btn sm" data-act="editProd" data-id="${p.id}">Modifica</button></div>
     </div>`; }).join('')}</div>` : `<p class="muted small" style="margin:6px 0 0">Nessun prodotto in questa categoria.</p>`}</section>`; };
   return `<div class="stack">
@@ -745,6 +768,7 @@ function formOrdine(o, dup){
       <label class="f">Prenotazioni entro<input type="datetime-local" id="o-chiusura" required value="${esc(v.chiusura)}"></label>
       <label class="f">Consegna prevista<input type="date" id="o-consegna" value="${esc(v.consegna)}"></label>
     </div>
+    <label class="f">Spese di spedizione € (facoltative, le vedi solo tu)<input id="o-sped" inputmode="decimal" placeholder="0" value="${editing && o.spedizione ? fmtIn(o.spedizione) : ''}"></label>
     <label class="f">Nota per i clienti (facoltativa)<textarea id="o-note" placeholder="Es. ritiro in piazza dalle 18 alle 19, pagamento alla consegna">${esc(v.note)}</textarea></label>
     <div><div class="row between"><h3>Prodotti disponibili</h3><button type="button" class="btn sm" id="addNewProd">${ICON.plus}Nuovo prodotto</button></div>
       <div class="small muted">Spunta i prodotti di questa settimana e controlla i prezzi. I clienti vedono solo il prezzo al pubblico.</div>
@@ -789,7 +813,7 @@ function formOrdine(o, dup){
       const id = editing ? o.id : uid();
       let stato = editing ? o.stato : 'bozza';
       if (editing && stato === 'chiusa' && new Date(chiusura) > new Date() && o.riapri) stato = 'aperta';
-      put('ordinazioni', id, {titolo, chiusura, consegna:f.querySelector('#o-consegna').value, note:f.querySelector('#o-note').value.trim(), prodotti, stato});
+      put('ordinazioni', id, {titolo, chiusura, consegna:f.querySelector('#o-consegna').value, note:f.querySelector('#o-note').value.trim(), prodotti, stato, spedizione:Math.max(0, num(f.querySelector('#o-sped').value))});
       if (!editing) { ordTab = 'riepilogo'; location.hash = 'ord-' + id; toast('Bozza creata: controlla l\'anteprima, poi premi Pubblica'); }
       else toast('Ordinazione salvata');
     }
@@ -847,6 +871,44 @@ function formPren(o, p){
         put('prenotazioni', ex.id, {righe:merged, nota:[ex.nota, data.nota].filter(Boolean).join(' · '), pagato: ex.pagato && data.pagato, letta:true});
         toast(`Aggiunto alla prenotazione già presente di ${m.nome}`);
       } else { put('prenotazioni', uid(), {...data, origine:'gestore', created_at:new Date().toISOString()}); toast('Prenotazione aggiunta'); }
+    }
+  });
+}
+function formAuto(o){
+  const ex = prenOf(o.id).find(isAuto), righe = ex?.righe || {};
+  const prods = (o.prodotti||[]).filter(it => it.categoria === 'agrumi' || num(righe[it.pid]) > 0);
+  if (!prods.length) { toast('In questa ordinazione non ci sono agrumi', true); return; }
+  openDialog(ex ? 'Modifica autoconsumo' : 'Autoconsumo Forme dell\'Anima', `
+    <div class="small muted">${esc(o.titolo)}. Gli agrumi per uso interno si aggiungono all'ordine al fornitore e si contano a <b>prezzo d'acquisto</b>: non generano ricavo e riducono il guadagno.</div>
+    <div class="qty">${prods.map(it => `<div class="qrow" data-pid="${esc(it.pid)}"><div><div class="t">${esc(it.nome)}</div><div class="d">acquisto ${fmtE(it.pf)} / ${esc(it.unita)}<span class="lt"></span></div></div><input class="q" inputmode="decimal" placeholder="0" aria-label="Quantità ${esc(it.nome)} in ${esc(it.unita)}" value="${righe[it.pid] ? fmtIn(righe[it.pid]) : ''}"></div>`).join('')}
+      <div class="qtot"><span>Costo</span><span id="a-tot">${fmtE(0)}</span></div></div>
+    <label class="f">Nota<input id="a-nota" value="${esc(ex?.nota||'')}" placeholder="Es. per il punto vendita"></label>`, {
+    ok: ex ? 'Salva' : 'Aggiungi',
+    extra: ex ? `<button type="button" class="btn danger" data-act="delPren" data-id="${ex.id}" style="margin-right:auto">Elimina</button>` : '',
+    onOpen: f => {
+      const tot = () => { let t = 0; f.querySelectorAll('.qrow').forEach(r => { const it = prods.find(x => x.pid === r.dataset.pid); const q = num(r.querySelector('.q').value); t += q*it.pf; r.querySelector('.lt').textContent = q ? ` · ${fmtE(q*it.pf)}` : ''; }); f.querySelector('#a-tot').textContent = fmtE(t); };
+      f.querySelector('.qty').addEventListener('input', tot); tot();
+    },
+    onSubmit: f => {
+      const nr = {};
+      f.querySelectorAll('.qrow').forEach(r => { const q = num(r.querySelector('.q').value); if (q > 0) nr[r.dataset.pid] = q; });
+      if (!Object.keys(nr).length) { toast(ex ? 'Inserisci almeno una quantità, oppure elimina l\'autoconsumo' : 'Inserisci almeno una quantità', true); return false; }
+      const data = {ord_id:o.id, nome:AUTO_NOME, telefono:'', righe:nr, nota:f.querySelector('#a-nota').value.trim(), autoconsumo:true, origine:'gestore', letta:true, pagato:false, consegnato:ex?.consegnato || false};
+      put('prenotazioni', ex?.id || uid(), ex ? data : {...data, created_at:new Date().toISOString()});
+      toast(ex ? 'Autoconsumo aggiornato' : 'Autoconsumo aggiunto all\'ordinazione');
+    }
+  });
+}
+function formSped(o){
+  openDialog('Spese di spedizione', `
+    <div class="small muted">${esc(o.titolo)}. L'importo riduce il guadagno dell'ordinazione; i clienti non lo vedono.</div>
+    <label class="f">Importo €<input id="s-imp" inputmode="decimal" placeholder="0" value="${o.spedizione ? fmtIn(o.spedizione) : ''}"></label>`, {
+    ok: 'Salva',
+    onOpen: f => f.querySelector('#s-imp').focus(),
+    onSubmit: f => {
+      const v = num(f.querySelector('#s-imp').value);
+      if (v < 0) { toast('L\'importo non può essere negativo', true); return false; }
+      put('ordinazioni', o.id, {spedizione:v}); toast(v ? `Spedizione: ${fmtE(v)}` : 'Spese di spedizione azzerate');
     }
   });
 }
@@ -1021,7 +1083,7 @@ function analisi(){
   const ultime = os.slice(0, 3).map(o => o.id), ultimaId = os[0]?.id;
   const perCliente = new Map(); let agr = 0, fda = 0, nPren = 0;
   for (const p of S.prenotazioni.values()) {
-    const o = S.ordinazioni.get(p.ord_id); if (!o || o.stato === 'bozza') continue;
+    const o = S.ordinazioni.get(p.ord_id); if (!o || o.stato === 'bozza' || isAuto(p)) continue;
     nPren++;
     const k = p.membro_id || 'n:' + String(p.nome).toLowerCase();
     const c = perCliente.get(k) || {id:p.membro_id, nome:nomeDi(p), ordini:new Set(), speso:0, debito:0};
@@ -1077,37 +1139,56 @@ async function scarica(crea, nome){
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
   toast('Foglio di calcolo scaricato');
 }
+const origineDi = p => isAuto(p) ? 'autoconsumo' : p.origine === 'cliente' ? 'link' : 'gestore';
 const testoProdotti = (p, o) => (o.prodotti || []).filter(it => num(p.righe?.[it.pid]) > 0).map(it => `${fmtQ(num(p.righe[it.pid]))} ${it.unita} ${it.nome}`).join(', ');
 function fogliOrdine(o){
   const st = ordStats(o), s = ordState(o);
   const riepilogo = [
     ['Ordinazione', o.titolo], ['Stato', STATO[s]], ['Chiusura prenotazioni', xD(o.chiusura)], ['Consegna', xDd(o.consegna)],
-    ['Prenotazioni', st.n], ['Ricavo', xE(st.ricavo)], ["Costo Forme dell'Anima", xE(st.costo)], ['Guadagno', xE(st.guadagno)],
+    ['Prenotazioni dei clienti', st.n], ['Ricavo', xE(st.ricavo)], ["Costo prodotti (Forme dell'Anima)", xE(st.costo)],
+    ["  di cui autoconsumo (a prezzo d'acquisto)", xE(st.autoconsumo)], ['Spese di spedizione', xE(st.spedizione)], ['Guadagno netto', xE(st.guadagno)],
     ['Margine', xP(st.guadagno, st.ricavo)], ['Incassato', xE(st.incassato)], ['Da incassare', xE(st.daIncassare)], [],
-    ['Prodotto', 'Categoria', 'Unità', 'Prezzo pubblico', 'Prezzo FdA', 'Margine unitario', 'Quantità', 'Ricavo', 'Costo FdA', 'Guadagno'],
-    ...st.rows.map(r => [r.nome, CAT[r.categoria] || '', r.unita, xE(r.pp), xE(r.pf), xE(r.pp - r.pf), xN(r.q), xE(r.ricavo), xE(r.costo), xE(r.guadagno)]),
-    ['Totale', '', '', '', '', '', '', xE(st.ricavo), xE(st.costo), xE(st.guadagno)],
+    ['Prodotto', 'Categoria', 'Unità', 'Prezzo pubblico', 'Prezzo FdA', 'Margine unitario', 'Venduta ai clienti', 'Autoconsumo', 'Quantità totale', 'Ricavo', 'Costo FdA', 'di cui autoconsumo', 'Guadagno'],
+    ...st.rows.map(r => [r.nome, CAT[r.categoria] || '', r.unita, xE(r.pp), xE(r.pf), xE(r.pp - r.pf), xN(r.qv), xN(r.qa), xN(r.q), xE(r.ricavo), xE(r.costo), xE(r.costoAuto), xE(r.ricavo - r.costo)]),
+    ['Totale prodotti', '', '', '', '', '', '', '', '', xE(st.ricavo), xE(st.costo), xE(st.autoconsumo), xE(st.ricavo - st.costo)],
+    ['Spese di spedizione', '', '', '', '', '', '', '', '', '', xE(st.spedizione), '', xE(-st.spedizione)],
+    ['Guadagno netto', '', '', '', '', '', '', '', '', '', '', '', xE(st.guadagno)],
   ];
   const prods = o.prodotti || [];
   const pren = [['Cliente', 'Telefono', ...prods.map(p => `${p.nome} (${p.unita})`), 'Totale', 'Costo FdA', 'Guadagno', 'Pagato', 'Consegnato', 'Origine', 'Data', 'Nota', 'Link stato'],
     ...st.prens.map(p => { const t = prenTot(p, o); return [nomeDi(p), p.telefono || S.membri.get(p.membro_id)?.telefono || '', ...prods.map(it => num(p.righe?.[it.pid]) || ''),
-      xE(t.ricavo), xE(t.costo), xE(t.guadagno), p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', p.origine === 'cliente' ? 'link' : 'gestore', xD(p.created_at), p.nota || '', linkStato(p.id)]; })];
-  const fda = [['Prodotto', 'Unità', 'Quantità', 'Prezzo FdA', 'Importo'],
-    ...st.rows.filter(r => r.q > 0).map(r => [r.nome, r.unita, xN(r.q), xE(r.pf), xE(r.costo)]), ['Totale', '', '', '', xE(st.costo)]];
-  return [['Riepilogo', riepilogo, [24, 26, 10, 14, 12, 14, 10, 12, 12, 12]],
-    ['Prenotazioni', pren, [22, 15, ...prods.map(() => 12), 11, 11, 11, 8, 11, 9, 16, 30, 40]],
-    ["Ordine Forme dell'Anima", fda, [26, 10, 10, 12, 12]]];
+      xE(t.ricavo), xE(t.costo), xE(t.guadagno), isAuto(p) ? '—' : p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', origineDi(p), xD(p.created_at), p.nota || '', isAuto(p) ? '' : linkStato(p.id)]; })];
+  const fda = [['Prodotto', 'Unità', 'Quantità', 'di cui autoconsumo', 'Prezzo FdA', 'Importo'],
+    ...st.rows.filter(r => r.q > 0).map(r => [r.nome, r.unita, xN(r.q), r.qa ? xN(r.qa) : '', xE(r.pf), xE(r.costo)]), ['Totale', '', '', '', '', xE(st.costo)]];
+  const fogli = [['Riepilogo', riepilogo, [34, 26, 10, 14, 12, 14, 12, 12, 12, 12, 12, 14, 12]],
+    ['Prenotazioni', pren, [26, 15, ...prods.map(() => 12), 11, 11, 11, 8, 11, 11, 16, 30, 40]],
+    ["Ordine Forme dell'Anima", fda, [26, 10, 10, 14, 12, 12]]];
+  const au = st.rows.filter(r => r.qa > 0);
+  if (au.length) fogli.push(['Autoconsumo', [['Prodotto', 'Categoria', 'Unità', 'Quantità', "Prezzo d'acquisto", 'Costo'],
+    ...au.map(r => [r.nome, CAT[r.categoria] || '', r.unita, xN(r.qa), xE(r.pf), xE(r.costoAuto)]), ['Totale', '', '', '', '', xE(st.autoconsumo)]], [26, 16, 10, 10, 15, 12]]);
+  return fogli;
 }
 function fogliTutto(){
   const os = ordini();
-  const ordRighe = [['Ordinazione', 'Stato', 'Chiusura', 'Consegna', 'Prenotazioni', 'Ricavo', 'Costo FdA', 'Guadagno', 'Margine', 'Incassato', 'Da incassare'],
-    ...os.map(o => { const st = ordStats(o); return [o.titolo, STATO[ordState(o)], xD(o.chiusura), xDd(o.consegna), st.n, xE(st.ricavo), xE(st.costo), xE(st.guadagno), xP(st.guadagno, st.ricavo), xE(st.incassato), xE(st.daIncassare)]; })];
+  const T = {ricavo:0, costo:0, autoconsumo:0, spedizione:0, guadagno:0, incassato:0, daIncassare:0, n:0};
+  const ordRighe = [['Ordinazione', 'Stato', 'Chiusura', 'Consegna', 'Prenotazioni', 'Ricavo', 'Costo FdA', 'di cui autoconsumo', 'Spedizione', 'Guadagno netto', 'Margine', 'Incassato', 'Da incassare'],
+    ...os.map(o => { const st = ordStats(o); for (const k in T) T[k] += st[k]; return [o.titolo, STATO[ordState(o)], xD(o.chiusura), xDd(o.consegna), st.n, xE(st.ricavo), xE(st.costo), xE(st.autoconsumo), xE(st.spedizione), xE(st.guadagno), xP(st.guadagno, st.ricavo), xE(st.incassato), xE(st.daIncassare)]; })];
+  ordRighe.push(['Totale', '', '', '', T.n, xE(T.ricavo), xE(T.costo), xE(T.autoconsumo), xE(T.spedizione), xE(T.guadagno), xP(T.guadagno, T.ricavo), xE(T.incassato), xE(T.daIncassare)]);
   const prenRighe = [['Ordinazione', 'Chiusura', 'Cliente', 'Telefono', 'Prodotti', 'Totale', 'Costo FdA', 'Guadagno', 'Pagato', 'Consegnato', 'Origine', 'Data', 'Nota']];
-  for (const o of os) for (const p of prenOf(o.id)) { const t = prenTot(p, o); prenRighe.push([o.titolo, xD(o.chiusura), nomeDi(p), p.telefono || S.membri.get(p.membro_id)?.telefono || '', testoProdotti(p, o), xE(t.ricavo), xE(t.costo), xE(t.guadagno), p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', p.origine === 'cliente' ? 'link' : 'gestore', xD(p.created_at), p.nota || '']); }
-  const prodRighe = [['Prodotto', 'Categoria', 'Unità', 'Quantità venduta', 'Ordinazioni', 'Ricavo', 'Costo FdA', 'Guadagno', 'Margine'],
-    ...[...prodStats().values()].sort((a,b) => b.ricavo - a.ricavo).map(p => [p.nome, CAT[p.categoria] || '', p.unita, xN(p.q), p.ordini, xE(p.ricavo), xE(p.costo), xE(p.guadagno), xP(p.guadagno, p.ricavo)])];
-  return [['Ordinazioni', ordRighe, [28, 20, 17, 11, 12, 12, 12, 12, 9, 12, 12]], ['Prenotazioni', prenRighe, [26, 17, 22, 15, 50, 11, 11, 11, 8, 11, 9, 17, 30]],
-    ['Prodotti', prodRighe, [26, 16, 10, 15, 12, 12, 12, 12, 9]], ...fogliClienti()];
+  for (const o of os) for (const p of prenOf(o.id)) { const t = prenTot(p, o); prenRighe.push([o.titolo, xD(o.chiusura), nomeDi(p), p.telefono || S.membri.get(p.membro_id)?.telefono || '', testoProdotti(p, o), xE(t.ricavo), xE(t.costo), xE(t.guadagno), isAuto(p) ? '—' : p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', origineDi(p), xD(p.created_at), p.nota || '']); }
+  const prodRighe = [['Prodotto', 'Categoria', 'Unità', 'Quantità venduta', 'Autoconsumo', 'Ordinazioni', 'Ricavo', 'Costo FdA', 'di cui autoconsumo', 'Guadagno', 'Margine'],
+    ...[...prodStats().values()].sort((a,b) => b.ricavo - a.ricavo).map(p => [p.nome, CAT[p.categoria] || '', p.unita, xN(p.qv), xN(p.qa), p.ordini, xE(p.ricavo), xE(p.costo), xE(p.costoAuto), xE(p.guadagno), xP(p.guadagno, p.ricavo)])];
+  // Autoconsumo: dettaglio per ordinazione e totali per prodotto.
+  const auRighe = [['Ordinazione', 'Chiusura', 'Prodotto', 'Categoria', 'Unità', 'Quantità', "Prezzo d'acquisto", 'Costo', 'Nota']];
+  const perProd = new Map();
+  for (const o of os) { const p = ordStats(o).auto; if (!p) continue;
+    for (const it of o.prodotti || []) { const q = num(p.righe?.[it.pid]); if (!(q > 0)) continue;
+      auRighe.push([o.titolo, xD(o.chiusura), it.nome, CAT[it.categoria] || '', it.unita, xN(q), xE(it.pf), xE(q*it.pf), p.nota || '']);
+      const c = perProd.get(it.pid) || {nome:it.nome, unita:it.unita, q:0, costo:0, volte:0}; c.q += q; c.costo += q*it.pf; c.volte++; perProd.set(it.pid, c); } }
+  auRighe.push(['Totale', '', '', '', '', '', '', xE(T.autoconsumo), ''], [], ['Totali per prodotto'], ['Prodotto', 'Unità', 'Quantità totale', 'Ordinazioni', 'Costo totale'],
+    ...[...perProd.values()].sort((a,b) => b.costo - a.costo).map(c => [c.nome, c.unita, xN(c.q), c.volte, xE(c.costo)]));
+  return [['Ordinazioni', ordRighe, [28, 20, 17, 11, 12, 12, 12, 15, 11, 14, 9, 12, 12]], ['Prenotazioni', prenRighe, [28, 17, 22, 15, 50, 11, 11, 11, 8, 11, 11, 17, 30]],
+    ['Prodotti', prodRighe, [26, 16, 10, 15, 12, 12, 12, 12, 15, 12, 9]], ['Autoconsumo', auRighe, [28, 17, 26, 16, 10, 10, 15, 12, 30]], ...fogliClienti()];
 }
 function fogliClienti(){
   const righe = [['Cliente', 'Telefono', 'Note', 'Prenotazioni', 'Totale speso', 'Spesa media', 'Pagato', 'Da pagare', 'Prima ordinazione', 'Ultima ordinazione', 'Prodotto preferito']];
@@ -1340,9 +1421,11 @@ const ACT = {
   delOrd: id => { const o = S.ordinazioni.get(id); const n = prenOf(id).length;
     confirmDo('Eliminare l\'ordinazione?', `"${esc(o.titolo)}" e le sue ${n} prenotazioni verranno eliminate definitivamente.`, 'Elimina', () => { const ids = prenOf(id).map(p => p.id); for (const k of ids) S.prenotazioni.delete(k); del('ordinazioni', id, ids); location.hash = 'ordinazioni'; toast('Ordinazione eliminata'); }); },
   newPren: id => formPren(S.ordinazioni.get(id)),
-  editPren: id => { const p = S.prenotazioni.get(id); if (p.letta === false) put('prenotazioni', id, {letta:true}); formPren(S.ordinazioni.get(p.ord_id), p); },
+  autoPren: id => formAuto(S.ordinazioni.get(id)),
+  shipOrd: id => formSped(S.ordinazioni.get(id)),
+  editPren: id => { const p = S.prenotazioni.get(id); if (isAuto(p)) { formAuto(S.ordinazioni.get(p.ord_id)); return; } if (p.letta === false) put('prenotazioni', id, {letta:true}); formPren(S.ordinazioni.get(p.ord_id), p); },
   delPren: id => { const p = S.prenotazioni.get(id); confirmDo('Eliminare la prenotazione?', `La prenotazione di ${esc(nomeDi(p))} verrà eliminata.`, 'Elimina', () => { del('prenotazioni', id); toast('Prenotazione eliminata'); }); },
-  togPaid: id => { const p = S.prenotazioni.get(id); put('prenotazioni', id, {pagato:!p.pagato, letta:true}); },
+  togPaid: id => { const p = S.prenotazioni.get(id); if (isAuto(p)) return; put('prenotazioni', id, {pagato:!p.pagato, letta:true}); },
   togDel: id => { const p = S.prenotazioni.get(id); put('prenotazioni', id, {consegnato:!p.consegnato, letta:true}); },
   copyPren: id => { const p = S.prenotazioni.get(id); copyText(msgMembro(p, S.ordinazioni.get(p.ord_id))); },
   copyMsg: k => copyText(MSGS[k] || ''),

@@ -139,12 +139,18 @@ Se un cliente risponde in chat invece di usare il link: **+ Prenotazione → Ha 
 
 I clienti devono indicare **nome e telefono**: senza un numero valido la prenotazione non parte.
 
+### Autoconsumo e spese di spedizione
+
+- **Autoconsumo**: nella scheda di un'ordinazione premi *Autoconsumo* e inserisci gli agrumi che Forme dell'Anima tiene per sé. Entrano nell'ordine al fornitore e nella lista consegne, ma si contano a **prezzo d'acquisto**: non generano ricavo e il loro costo riduce il guadagno. C'è una sola voce di autoconsumo per ordinazione: premendo di nuovo il pulsante la modifichi. Non compare tra i clienti né nelle loro statistiche.
+- **Spedizione**: premi *Spedizione*, oppure compila il campo nel modulo dell'ordinazione, e inserisci l'importo. Si può cambiare in qualsiasi momento, anche dopo la consegna. I clienti non lo vedono.
+- **Guadagno netto** = ricavi − costo di tutti i prodotti (autoconsumo compreso) − spese di spedizione. È il valore mostrato in dashboard, nelle schede e nei fogli Excel.
+
 ### Fogli di calcolo (Excel)
 
 | Dove | Pulsante | Contenuto |
 |---|---|---|
-| Scheda di un'ordinazione | **Excel** | Riepilogo con i conti, Prenotazioni (una colonna per prodotto), Ordine per Forme dell'Anima |
-| Dashboard | **Excel** | Tutte le ordinazioni, tutte le prenotazioni, prodotti, anagrafe clienti |
+| Scheda di un'ordinazione | **Excel** | Riepilogo con i conti (autoconsumo, spedizione, guadagno netto), Prenotazioni (una colonna per prodotto), Ordine per Forme dell'Anima, Autoconsumo |
+| Dashboard | **Excel** | Tutte le ordinazioni con i totali, tutte le prenotazioni, prodotti (venduti e in autoconsumo), autoconsumo (dettaglio e totali per prodotto), anagrafe clienti |
 | Clienti | **Excel** | Anagrafe con spesa, pagamenti e prodotto preferito |
 | Scheda cliente | **Excel** | Resoconto personale, storico, dettaglio prodotti, prodotti preferiti |
 
