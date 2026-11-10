@@ -139,6 +139,10 @@ Se un cliente risponde in chat invece di usare il link: **+ Prenotazione → Ha 
 
 I clienti devono indicare **nome e telefono**: senza un numero valido la prenotazione non parte.
 
+### Riepilogo prodotti
+
+Nella scheda di ogni ordinazione, la sezione **Riepilogo prodotti** mostra per ogni prodotto quante prenotazioni lo contengono e la quantità totale prenotata, divisa tra clienti e autoconsumo quando c'è. In fondo elenca i prodotti offerti ma non prenotati. *Copia* prepara il testo da incollare in WhatsApp; *Excel* scarica il foglio dell'ordinazione.
+
 ### Autoconsumo e spese di spedizione
 
 - **Autoconsumo**: nella scheda di un'ordinazione premi *Autoconsumo* e inserisci gli agrumi che Forme dell'Anima tiene per sé. Entrano nell'ordine al fornitore e nella lista consegne, ma si contano a **prezzo d'acquisto**: non generano ricavo e il loro costo riduce il guadagno. C'è una sola voce di autoconsumo per ordinazione: premendo di nuovo il pulsante la modifichi. Non compare tra i clienti né nelle loro statistiche.
@@ -149,8 +153,8 @@ I clienti devono indicare **nome e telefono**: senza un numero valido la prenota
 
 | Dove | Pulsante | Contenuto |
 |---|---|---|
-| Scheda di un'ordinazione | **Excel** | Riepilogo con i conti (autoconsumo, spedizione, guadagno netto), Prenotazioni (una colonna per prodotto), Ordine per Forme dell'Anima, Autoconsumo |
-| Dashboard | **Excel** | Tutte le ordinazioni con i totali, tutte le prenotazioni, prodotti (venduti e in autoconsumo), autoconsumo (dettaglio e totali per prodotto), anagrafe clienti |
+| Scheda di un'ordinazione | **Excel** | Riepilogo prodotti (quantità prenotate per prodotto), riepilogo con i conti (autoconsumo, spedizione, guadagno netto), Prenotazioni (una colonna per prodotto), Ordine per Forme dell'Anima, Autoconsumo |
+| Dashboard | **Excel** | Storico prodotti (una colonna per ordinazione, con totali e media), prodotti per ordinazione riga per riga, tutte le ordinazioni con i totali, tutte le prenotazioni, prodotti (venduti e in autoconsumo), autoconsumo (dettaglio e totali per prodotto), anagrafe clienti |
 | Clienti | **Excel** | Anagrafe con spesa, pagamenti e prodotto preferito |
 | Scheda cliente | **Excel** | Resoconto personale, storico, dettaglio prodotti, prodotti preferiti |
 

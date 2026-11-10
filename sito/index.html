@@ -266,6 +266,24 @@ function ordStats(o){
   return {...t, spedizione, spese:t.costo + spedizione, guadagno:t.ricavo - t.costo - spedizione,
     rows, prens, auto:auto[0] || null, n:clienti.length, incassato, daIncassare};
 }
+// Riepilogo prodotti di un'ordinazione: quanto è stato prenotato di ogni prodotto e da quante persone.
+function quantita(o){
+  const st = ordStats(o);
+  return st.rows.map(r => ({...r, persone:st.prens.filter(p => !isAuto(p) && num(p.righe?.[r.pid]) > 0).length}))
+    .sort((a,b) => (a.categoria||'').localeCompare(b.categoria||'') || (b.q > 0) - (a.q > 0) || a.nome.localeCompare(b.nome,'it'));
+}
+function msgQuantita(o){
+  const rows = quantita(o).filter(r => r.q > 0);
+  const L = [`Riepilogo prodotti — ${o.titolo}`];
+  if (o.consegna) L.push(`Consegna: ${fmtDlong(o.consegna)}`);
+  if (!rows.length) return [...L, '', 'Nessun prodotto prenotato.'].join('\n');
+  for (const cat of ['agrumi','fda']) {
+    const rr = rows.filter(r => r.categoria === cat); if (!rr.length) continue;
+    L.push('', `*${CAT[cat]}*`);
+    for (const r of rr) L.push(`• ${r.nome}: *${fmtQ(r.q)} ${r.unita}*` + (r.qa ? ` (${fmtQ(r.qv)} clienti + ${fmtQ(r.qa)} autoconsumo)` : '') + ` — ${r.persone} prenotazion${r.persone===1?'e':'i'}`);
+  }
+  return L.join('\n');
+}
 function prodStats(){
   const m = new Map();
   for (const o of ordini()) for (const r of ordStats(o).rows) {
@@ -625,9 +643,10 @@ function viewOrdine(id){
   const o = S.ordinazioni.get(id);
   if (!o) return `<div class="panel empty"><h2>Ordinazione non trovata</h2><a class="btn" href="#ordinazioni">Torna alle ordinazioni</a></div>`;
   const s = ordState(o), st = ordStats(o);
-  const tabs = [['prenotazioni',`Prenotazioni (${st.n})`],['riepilogo','Prodotti e conti'],['messaggi','Messaggi']];
+  const tabs = [['prenotazioni',`Prenotazioni (${st.n})`],['quantita','Riepilogo prodotti'],['riepilogo','Conti'],['messaggi','Messaggi']];
   let body = '';
   if (ordTab === 'riepilogo') body = tabRiepilogo(o, st);
+  else if (ordTab === 'quantita') body = tabQuantita(o);
   else if (ordTab === 'messaggi') body = tabMessaggi(o, st);
   else body = tabPrenotazioni(o, st, s);
   return `<div class="stack" style="gap:16px">
@@ -692,6 +711,21 @@ function tabPrenotazioni(o, st){
         <div class="row" style="gap:4px"><button class="btn sm" data-act="editPren" data-id="${p.id}">Modifica</button><button class="btn sm ghost danger" data-act="delPren" data-id="${p.id}" aria-label="Elimina prenotazione">✕</button></div>
       </div></div>
     </div>`; }).join('')}</div>${matchMedia('(pointer: coarse)').matches ? '<p class="small muted" style="margin:8px 0 0">Scorri una prenotazione verso destra per segnarla pagata, verso sinistra per segnarla consegnata.</p>' : ''}</div>`;
+}
+function tabQuantita(o){
+  const rows = quantita(o), si = rows.filter(r => r.q > 0), no = rows.filter(r => !(r.q > 0));
+  if (!rows.length) return `<div class="panel empty"><p>Questa ordinazione non ha prodotti.</p><button class="btn primary" data-act="editOrd" data-id="${o.id}">Scegli i prodotti</button></div>`;
+  MSGS.qta = msgQuantita(o);
+  const auto = si.some(r => r.qa > 0);
+  const riga = r => `<tr><td><b>${esc(r.nome)}</b><br><span class="cat ${r.categoria}">${CAT[r.categoria]||''}</span></td><td>${esc(r.unita)}</td>
+    <td class="n">${r.persone}</td>${auto ? `<td class="n">${fmtQ(r.qv)}</td><td class="n">${r.qa ? fmtQ(r.qa) : '—'}</td>` : ''}<td class="n"><b>${fmtQ(r.q)}</b></td></tr>`;
+  return `<div class="stack" style="gap:16px"><section class="panel">
+    <div class="row between" style="margin-bottom:8px"><h2>Quantità prenotate</h2><div class="row" style="gap:6px"><button class="btn sm" data-act="copyMsg" data-id="qta">${ICON.copy}Copia</button><button class="btn sm" data-act="xlsOrd" data-id="${o.id}">${ICON.xls}Excel</button></div></div>
+    ${si.length ? `<div class="tscroll"><table>
+      <thead><tr><th>Prodotto</th><th>Unità</th><th class="n">Prenotazioni</th>${auto ? '<th class="n">Clienti</th><th class="n">Autoconsumo</th>' : ''}<th class="n">Totale</th></tr></thead>
+      <tbody>${si.map(riga).join('')}</tbody></table></div>` : '<p class="muted small" style="margin:0">Nessun prodotto ancora prenotato.</p>'}
+    ${no.length ? `<p class="small muted" style="margin:10px 0 0">Non prenotati: ${no.map(r => esc(r.nome)).join(', ')}</p>` : ''}
+  </section></div>`;
 }
 function tabRiepilogo(o, st){
   if (!st.rows.length) return `<div class="panel empty"><p>Questa ordinazione non ha prodotti.</p><button class="btn primary" data-act="editOrd" data-id="${o.id}">Scegli i prodotti</button></div>`;
@@ -1160,7 +1194,10 @@ function fogliOrdine(o){
       xE(t.ricavo), xE(t.costo), xE(t.guadagno), isAuto(p) ? '—' : p.pagato ? 'sì' : 'no', p.consegnato ? 'sì' : 'no', origineDi(p), xD(p.created_at), p.nota || '', isAuto(p) ? '' : linkStato(p.id)]; })];
   const fda = [['Prodotto', 'Unità', 'Quantità', 'di cui autoconsumo', 'Prezzo FdA', 'Importo'],
     ...st.rows.filter(r => r.q > 0).map(r => [r.nome, r.unita, xN(r.q), r.qa ? xN(r.qa) : '', xE(r.pf), xE(r.costo)]), ['Totale', '', '', '', '', xE(st.costo)]];
-  const fogli = [['Riepilogo', riepilogo, [34, 26, 10, 14, 12, 14, 12, 12, 12, 12, 12, 14, 12]],
+  const qta = [['Riepilogo prodotti', o.titolo], ['Consegna', xDd(o.consegna)], [],
+    ['Categoria', 'Prodotto', 'Unità', 'Prenotazioni', 'Quantità clienti', 'Autoconsumo', 'Quantità totale'],
+    ...quantita(o).map(r => [CAT[r.categoria] || '', r.nome, r.unita, r.persone, xN(r.qv), xN(r.qa), xN(r.q)])];
+  const fogli = [['Riepilogo', riepilogo, [34, 26, 10, 14, 12, 14, 12, 12, 12, 12, 12, 14, 12]], ['Riepilogo prodotti', qta, [18, 28, 10, 13, 15, 12, 15]],
     ['Prenotazioni', pren, [26, 15, ...prods.map(() => 12), 11, 11, 11, 8, 11, 11, 16, 30, 40]],
     ["Ordine Forme dell'Anima", fda, [26, 10, 10, 14, 12, 12]]];
   const au = st.rows.filter(r => r.qa > 0);
@@ -1187,8 +1224,27 @@ function fogliTutto(){
       const c = perProd.get(it.pid) || {nome:it.nome, unita:it.unita, q:0, costo:0, volte:0}; c.q += q; c.costo += q*it.pf; c.volte++; perProd.set(it.pid, c); } }
   auRighe.push(['Totale', '', '', '', '', '', '', xE(T.autoconsumo), ''], [], ['Totali per prodotto'], ['Prodotto', 'Unità', 'Quantità totale', 'Ordinazioni', 'Costo totale'],
     ...[...perProd.values()].sort((a,b) => b.costo - a.costo).map(c => [c.nome, c.unita, xN(c.q), c.volte, xE(c.costo)]));
+  const [storico, perOrd] = fogliStorico();
   return [['Ordinazioni', ordRighe, [28, 20, 17, 11, 12, 12, 12, 15, 11, 14, 9, 12, 12]], ['Prenotazioni', prenRighe, [28, 17, 22, 15, 50, 11, 11, 11, 8, 11, 11, 17, 30]],
-    ['Prodotti', prodRighe, [26, 16, 10, 15, 12, 12, 12, 12, 15, 12, 9]], ['Autoconsumo', auRighe, [28, 17, 26, 16, 10, 10, 15, 12, 30]], ...fogliClienti()];
+    ['Prodotti', prodRighe, [26, 16, 10, 15, 12, 12, 12, 12, 15, 12, 9]], ['Autoconsumo', auRighe, [28, 17, 26, 16, 10, 10, 15, 12, 30]], storico, perOrd, ...fogliClienti()];
+}
+// Storico prodotti: una riga per prodotto e una colonna per ordinazione (dalla più vecchia),
+// più l'elenco riga per riga (ordinazione × prodotto) comodo per filtri e tabelle pivot.
+function fogliStorico(){
+  const os = ordini().filter(o => o.stato !== 'bozza').reverse();
+  const prod = new Map(), lungo = [['Ordinazione', 'Chiusura', 'Consegna', 'Categoria', 'Prodotto', 'Unità', 'Prenotazioni', 'Quantità clienti', 'Autoconsumo', 'Quantità totale']];
+  os.forEach((o, i) => { for (const r of quantita(o)) {
+    const k = r.pid + '|' + r.unita;
+    const c = prod.get(k) || {nome:r.nome, categoria:r.categoria, unita:r.unita, per:new Array(os.length).fill(''), q:0, qv:0, qa:0, volte:0};
+    c.per[i] = xN(r.q); c.q += r.q; c.qv += r.qv; c.qa += r.qa; if (r.q > 0) c.volte++; prod.set(k, c);
+    if (r.q > 0) lungo.push([o.titolo, xD(o.chiusura), xDd(o.consegna), CAT[r.categoria] || '', r.nome, r.unita, r.persone, xN(r.qv), xN(r.qa), xN(r.q)]);
+  } });
+  const righe = [...prod.values()].filter(c => c.q > 0).sort((a,b) => (a.categoria||'').localeCompare(b.categoria||'') || a.nome.localeCompare(b.nome,'it'));
+  const tab = [['Categoria', 'Prodotto', 'Unità', ...os.map(o => o.titolo), 'Totale', 'di cui autoconsumo', 'Ordinazioni', 'Media per ordinazione'],
+    ['', '', 'Consegna', ...os.map(o => xDd(o.consegna)), '', '', '', ''],
+    ...righe.map(c => [CAT[c.categoria] || '', c.nome, c.unita, ...c.per, xN(c.q), xN(c.qa), c.volte, c.volte ? xN(c.q / c.volte) : ''])];
+  return [['Storico prodotti', tab, [18, 28, 10, ...os.map(() => 14), 10, 16, 12, 20]],
+    ['Prodotti per ordinazione', lungo, [28, 17, 11, 18, 28, 10, 13, 15, 12, 15]]];
 }
 function fogliClienti(){
   const righe = [['Cliente', 'Telefono', 'Note', 'Prenotazioni', 'Totale speso', 'Spesa media', 'Pagato', 'Da pagare', 'Prima ordinazione', 'Ultima ordinazione', 'Prodotto preferito']];
@@ -1303,7 +1359,7 @@ function pannelliAnalisi(){
    - nell'app installata, scorri dal bordo sinistro: torna indietro;
    - su una prenotazione: verso destra = pagato, verso sinistra = consegnato;
    - in una finestra: trascina in giù la parte alta per chiuderla. */
-const ORDTABS = ['prenotazioni', 'riepilogo', 'messaggi'];
+const ORDTABS = ['prenotazioni', 'quantita', 'riepilogo', 'messaggi'];
 const NAVK = NAV.map(n => n[0]);
 const NO_SWIPE = 'input,textarea,select,.tscroll,.seg,.msg,.kpis,iframe,svg';
 let animDir = 0, gs = null;
