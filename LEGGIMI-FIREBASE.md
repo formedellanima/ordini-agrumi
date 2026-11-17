@@ -139,6 +139,15 @@ Se un cliente risponde in chat invece di usare il link: **+ Prenotazione → Ha 
 
 I clienti devono indicare **nome e telefono**: senza un numero valido la prenotazione non parte.
 
+### I clienti rivedono le proprie prenotazioni
+
+Quando un cliente riapre il link di prenotazione, vede cosa ha prenotato, con totale, nota ed etichetta pagata o da pagare:
+- se l'ordinazione è aperta, sopra l'elenco dei prodotti;
+- se è chiusa, al posto dei prodotti e in sola lettura, senza poterla modificare;
+- se non ci sono ordinazioni aperte, con le ultime prenotazioni fatte.
+
+Il telefono ricorda le prenotazioni inviate da lì e quelle di cui si è aperto il link di stato. Su un telefono diverso basta aprire una volta il link di stato ricevuto dopo la prenotazione. Per riservatezza nessuno può cercare le prenotazioni per nome o telefono: si legge solo una prenotazione di cui si conosce il codice.
+
 ### Riepilogo prodotti
 
 Nella scheda di ogni ordinazione, la sezione **Riepilogo prodotti** mostra per ogni prodotto quante prenotazioni lo contengono e la quantità totale prenotata, divisa tra clienti e autoconsumo quando c'è. In fondo elenca i prodotti offerti ma non prenotati. *Copia* prepara il testo da incollare in WhatsApp; *Excel* scarica il foglio dell'ordinazione.

@@ -26,9 +26,6 @@
 .steps .t{font-weight:600;padding-top:3px}
 .steps li:not(.ok):not(.now) .t{color:var(--muted)}
 .steps .d{font-size:.84rem;color:var(--muted)}
-.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-weight:600;font-size:.88rem}
-.pill.si{background:var(--leaf-soft);color:var(--leaf)}
-.pill.no{background:var(--warn-soft);color:var(--warn)}
 </style>
 </head>
 <body>
@@ -94,6 +91,7 @@ async function load(){
     const s = await F.getDoc(F.doc(db, 'prenotazioni', id));
     if (!s.exists()) { msg('Prenotazione non trovata', 'Potrebbe essere stata annullata dal gestore. Per informazioni scrivigli su WhatsApp.'); return; }
     const p = s.data();
+    try { const l = JSON.parse(localStorage.getItem('mie_prenotazioni') || '[]'); if (!l.some(x => x.id === id)) localStorage.setItem('mie_prenotazioni', JSON.stringify([{id, ord:p.ord_id, titolo:'', quando:new Date().toISOString()}, ...l].slice(0, 20))); } catch {}
     let o = null;
     try { const so = await F.getDoc(F.doc(db, 'pubbliche', p.ord_id)); if (so.exists()) o = so.data(); } catch {}
     render(p, o);

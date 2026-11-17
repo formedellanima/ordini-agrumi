@@ -303,3 +303,7 @@ dialog .dh{touch-action:none}
 .chip.auto{background:var(--leaf-soft);color:var(--leaf)}
 .li.auto{background:linear-gradient(90deg,var(--leaf-soft),transparent 75%);margin:0 -16px;padding-left:16px;padding-right:16px}
 tfoot tr.sub td{font-weight:500;color:var(--muted)}
+/* Etichette pagata / da pagare (pagine dei clienti) */
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-weight:600;font-size:.88rem;white-space:nowrap}
+.pill.si{background:var(--leaf-soft);color:var(--leaf)}
+.pill.no{background:var(--warn-soft);color:var(--warn)}

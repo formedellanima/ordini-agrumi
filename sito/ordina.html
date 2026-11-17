@@ -37,10 +37,39 @@ const CAT = {agrumi:'Agrumi biologici', fda:"Forme dell'Anima"};
 const linkStato = id => { const u = new URL('stato.html', location.href); u.search = '?p=' + encodeURIComponent(id); u.hash = ''; return u.href; };
 const mie = () => { try { return JSON.parse(localStorage.getItem('mie_prenotazioni') || '[]'); } catch { return []; } };
 function ricorda(id){ try { localStorage.setItem('mie_prenotazioni', JSON.stringify([{id, ord:O.id, titolo:O.titolo, quando:new Date().toISOString()}, ...mie()].slice(0, 20))); } catch {} }
-function giaHtml(){
-  const l = mie().filter(x => x.ord === O.id);
-  if (!l.length || ANTEPRIMA) return '';
-  return `<div class="small" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center"><b>Hai già prenotato da questo telefono:</b>${l.map((x, i) => `<a href="${esc(linkStato(x.id))}">vedi lo stato${l.length > 1 ? ' (' + (i + 1) + ')' : ''}</a>`).join('')}</div>`;
+// Prenotazioni fatte (o aperte col link di stato) da questo telefono: si leggono una per una dal loro codice,
+// che solo chi ha prenotato conosce. Restano visibili anche dopo la chiusura, in sola lettura.
+let MIE = [];      // [{p, o}] prenotazioni da mostrare
+async function caricaMie(soloOrd){
+  const out = [], ordCache = new Map();
+  for (const x of mie().filter(x => !soloOrd || x.ord === soloOrd).slice(0, 8)) {
+    try {
+      const s = await F.getDoc(F.doc(db, 'prenotazioni', x.id)); if (!s.exists()) continue;
+      const p = {id:s.id, ...s.data()};
+      let o = soloOrd && O?.id === p.ord_id ? O : ordCache.get(p.ord_id);
+      if (o === undefined) { const so = await F.getDoc(F.doc(db, 'pubbliche', p.ord_id)); o = so.exists() ? {id:so.id, ...so.data()} : null; ordCache.set(p.ord_id, o); }
+      out.push({p, o});
+    } catch {}
+  }
+  return out;
+}
+function prenHtml({p, o}, conTitolo){
+  const prodotti = (o?.prodotti || []).filter(it => num(p.righe?.[it.pid]) > 0);
+  const tot = prodotti.reduce((s, it) => s + num(p.righe[it.pid]) * num(it.pp), 0);
+  return `<div class="stack" style="gap:6px">
+    <div class="row between" style="align-items:center;gap:8px"><div style="min-width:0">${conTitolo ? `<b>${esc(o?.titolo || 'Ordinazione')}</b><br>` : ''}<span class="small muted">A nome di ${esc(p.nome)}</span></div>
+      <span class="row" style="gap:6px"><span class="pill ${p.pagato ? 'si' : 'no'}">${p.pagato ? 'Pagata' : 'Da pagare'}</span>${p.consegnato ? '<span class="pill si">Consegnata</span>' : ''}</span></div>
+    ${o ? `<div class="list">${prodotti.map(it => `<div class="li" style="padding:8px 0"><div class="main"><div class="t">${esc(it.nome)}</div><div class="d">${fmtQ(num(p.righe[it.pid]))} ${esc(it.unita)} × ${fmtE(it.pp)}</div></div><div class="side"><b>${fmtE(num(p.righe[it.pid]) * num(it.pp))}</b></div></div>`).join('')}</div>
+      <div class="qtot"><span>Totale</span><span>${fmtE(tot)}</span></div>` : '<p class="small muted" style="margin:0">I dettagli dell\'ordinazione non sono più disponibili.</p>'}
+    ${p.nota ? `<div class="small muted">Nota: ${esc(p.nota)}</div>` : ''}
+    <a class="small" href="${esc(linkStato(p.id))}">Segui lo stato della prenotazione →</a>
+  </div>`;
+}
+function mieHtml(chiusa, conTitolo){
+  if (!MIE.length || ANTEPRIMA) return '';
+  return `<section class="panel stack" style="gap:14px"><h2 style="margin:0">${MIE.length > 1 ? 'Le tue prenotazioni' : 'La tua prenotazione'}</h2>
+    <p class="small muted" style="margin:0">${chiusa ? 'Le prenotazioni sono chiuse: puoi vedere cosa hai prenotato, ma non modificarlo.' : 'Hai già prenotato da questo telefono.'} Per cambiamenti scrivi al gestore su WhatsApp.</p>
+    ${MIE.map(x => prenHtml(x, conTitolo)).join('<hr style="border:0;border-top:1px solid var(--line);margin:0">')}</section>`;
 }
 async function copia(t){ try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
 const ANTEPRIMA = new URLSearchParams(location.search).has('anteprima');
@@ -58,8 +87,8 @@ function render(){
   bar.hidden = !(O && O.aperta && step === 'shop');
   if (!O) return;
   if (!O.aperta) {
-    app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>${esc(O.titolo)}</h1>${giaHtml()}</div>
-      <div class="panel empty"><h2>Prenotazioni chiuse</h2><p>Il termine per questa ordinazione è passato. Aspetta il prossimo messaggio nel gruppo WhatsApp.</p></div>`;
+    app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>${esc(O.titolo)}</h1>${O.consegna ? `<div class="small muted">Consegna prevista ${fmtDlong(O.consegna)}</div>` : ''}</div>
+      <div class="stack" style="gap:14px"><div class="panel empty"><h2>Prenotazioni chiuse</h2><p>Il termine per questa ordinazione è passato.${MIE.length ? ' Qui sotto trovi quello che hai prenotato.' : ' Aspetta il prossimo messaggio nel gruppo WhatsApp.'}</p></div>${mieHtml(true)}</div>`;
     return;
   }
   if (step === 'done') {
@@ -116,11 +145,10 @@ function render(){
       <div class="eyebrow">Agrumi bio · Forme dell'Anima</div>
       <h1>${esc(O.titolo)}</h1>
       <span class="when">Prenota entro ${fmtDTlong(O.chiusura)}</span>
-      ${giaHtml()}
       ${O.consegna ? `<div class="small muted">Consegna prevista ${fmtDlong(O.consegna)}</div>` : ''}
       ${O.note ? `<div class="small" style="white-space:pre-wrap">${esc(O.note)}</div>` : ''}
     </div>
-    <div class="stack" style="gap:14px">${groups}</div>`;
+    <div class="stack" style="gap:14px">${mieHtml(false)}${groups}</div>`;
   updateBar();
 }
 function recapHtml(){
@@ -187,6 +215,7 @@ async function send(e){
   sending = false;
   if (window.Notifiche && O.avvisi?.length) Notifiche.invia(O.avvisi, Notifiche.nuovaPrenotazione({ordinazione:O.titolo, prodotti:n, totale:tot, link:O.app_url ? O.app_url.split('#')[0] + '#ord-' + O.id : ''}));
   lastId = ref.id; ricorda(ref.id); draft = null;
+  caricaMie(O.id).then(l => { MIE = l; if (step !== 'done') render(); });
   lastTot = tot; step = 'done'; render(); window.scrollTo(0,0);
 }
 
@@ -221,8 +250,14 @@ async function boot(){
     }
   } catch (e) { error = e; }
   if (error) { app.innerHTML = '<div class="panel empty"><h2>Prodotti non raggiungibili</h2><p>Controlla la connessione e ricarica la pagina.</p><button class="btn primary" onclick="location.reload()">Ricarica</button></div>'; return; }
-  if (!data) { app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>Nessuna ordinazione aperta</h1></div><div class="panel empty"><p>In questo momento non ci sono prenotazioni aperte. Il prossimo elenco di prodotti arriverà nel gruppo WhatsApp.</p></div>`; return; }
+  if (!data) {
+    // Nessuna ordinazione aperta: mostra comunque le ultime prenotazioni fatte da questo telefono.
+    try { MIE = await caricaMie(); } catch { MIE = []; }
+    app.innerHTML = `<div class="shop-head"><div class="eyebrow">Agrumi bio · Forme dell'Anima</div><h1>Nessuna ordinazione aperta</h1></div><div class="stack" style="gap:14px"><div class="panel empty"><p>In questo momento non ci sono prenotazioni aperte. Il prossimo elenco di prodotti arriverà nel gruppo WhatsApp.</p></div>${mieHtml(true, true)}</div>`;
+    return;
+  }
   O = data; O.prodotti = (O.prodotti||[]).map(p => ({...p, pp:num(p.pp)}));
+  try { MIE = await caricaMie(O.id); } catch { MIE = []; }
   document.title = O.titolo;
   render();
 }
